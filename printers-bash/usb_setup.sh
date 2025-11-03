@@ -41,7 +41,7 @@ SERVER_PORT=3006
 #   1. Go to: https://github.com/settings/tokens
 #   2. Generate new token (classic) with 'repo' scope
 #   3. Paste token below:
-GITHUB_TOKEN="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"  # Example: "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+GITHUB_TOKEN="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"  # Example: "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 #
 # Method 2: SSH (requires SSH key already on device)
 #   Set USE_SSH=true and make sure SSH key is configured
