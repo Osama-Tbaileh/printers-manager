@@ -17,10 +17,13 @@ A modern FastAPI-based REST API for managing ESC/POS thermal printers. This serv
 
 ## Requirements
 
-- Python 3.8+
+- **Python 3.11+** (recommended) - The USB setup script automatically upgrades if needed
+- **Python 3.8+** (minimum) - Older versions work but with limited package support
 - CUPS (Common UNIX Printing System)
 - A configured thermal printer accessible via `lp` command
 - `print_image_any.py` script (for image printing)
+
+**Note:** If using the USB auto-setup script, Python 3.11 will be installed automatically if your system has an older version.
 
 ## Installation
 

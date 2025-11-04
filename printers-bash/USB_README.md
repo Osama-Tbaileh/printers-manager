@@ -28,19 +28,21 @@ sudo ./usb_setup.sh
 When you run the setup script, it will:
 1. ✅ **Update entire system** (apt update && upgrade)
 2. ✅ **Install CUPS printing system** (auto-configured)
-3. ✅ **Clone repository** from GitHub
-4. ✅ **Create Python virtual environment**
-5. ✅ **Install all required packages**
-6. ✅ **Generate secure API key** automatically
-7. ✅ **Detect network printers** automatically
-8. ✅ **Install systemd service** for auto-start on boot
-9. ✅ **Configure auto-updates** from GitHub on every restart
-10. ✅ **Start server immediately** via systemd
-11. ✅ **Display API key and access URLs**
+3. ✅ **Check Python version** and upgrade to 3.11+ if needed
+4. ✅ **Clone repository** from GitHub
+5. ✅ **Create Python virtual environment** (with correct Python version)
+6. ✅ **Install all required packages**
+7. ✅ **Generate secure API key** automatically
+8. ✅ **Detect network printers** automatically
+9. ✅ **Install systemd service** for auto-start on boot
+10. ✅ **Configure auto-updates** from GitHub on every restart
+11. ✅ **Start server immediately** via systemd
+12. ✅ **Display API key and access URLs**
 
 **100% Automatic - No user input required!**
 **Server auto-starts on every reboot!** 🔄
 **Server auto-updates from GitHub on every restart!** 🔄
+**Python auto-upgrades to 3.11+ if your system is older!** 🔄
 
 ---
 
@@ -300,12 +302,15 @@ curl -H "X-API-Key: YOUR_API_KEY" \
 - **Internet connection** (to clone from GitHub and update system)
 - **Sudo access** (script will install everything else automatically)
 
-**The script automatically installs:**
+**The script automatically installs/upgrades:**
 - ✅ Git
-- ✅ Python 3 + pip + venv
+- ✅ **Python 3.11+** (automatically upgrades from older versions)
+- ✅ Python pip + venv
 - ✅ CUPS (printing system)
-- ✅ All Python packages
+- ✅ All Python packages (FastAPI, Pillow, etc.)
 - ✅ System updates
+
+**Note:** If your Raspberry Pi has Python 3.6, 3.7, 3.8, 3.9, or 3.10, the script will automatically install Python 3.11 alongside it and use it for the server.
 
 ---
 
@@ -344,6 +349,28 @@ sudo journalctl -u printer-server -f
 cat ~/printer-server/.env | grep API_KEY
 ```
 
+### **Python version errors (package installation fails)**
+If you see errors like "No matching distribution found for fastapi==0.115.0":
+
+1. **Check Python version:**
+   ```bash
+   python3 --version
+   ```
+
+2. **The script should have installed Python 3.11 automatically**
+   ```bash
+   python3.11 --version
+   ```
+
+3. **If Python 3.11 is installed but packages still fail:**
+   - Remove the installation directory: `rm -rf ~/printer-server`
+   - Run the setup script again: `sudo ./usb_setup.sh`
+
+4. **Old Python versions and compatibility:**
+   - Python 3.6 or older: ❌ Not supported
+   - Python 3.7 - 3.10: ⚠️ Script auto-installs Python 3.11
+   - Python 3.11+: ✅ Fully supported
+
 ---
 
 ## 🎉 Success!
@@ -352,6 +379,7 @@ Once setup is complete:
 - ✅ **Server is running** as systemd service
 - ✅ **Auto-starts on boot** (systemd enabled)
 - ✅ **Auto-updates from GitHub** on every restart
+- ✅ **Python 3.11+** installed and configured
 - ✅ **API key generated** and displayed
 - ✅ **IP address displayed** on screen
 - ✅ **CUPS configured** and ready

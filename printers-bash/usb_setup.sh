@@ -103,6 +103,38 @@ if ! command -v python3 &> /dev/null; then
 fi
 echo -e "${GREEN}✓ All dependencies verified${NC}"
 
+# Check Python version and upgrade if needed
+echo ""
+echo -e "${CYAN}Checking Python version...${NC}"
+CURRENT_PYTHON_VERSION=$(python3 --version 2>&1 | awk '{print $2}')
+echo "Current Python version: $CURRENT_PYTHON_VERSION"
+
+# Extract major and minor version
+PYTHON_MAJOR=$(echo $CURRENT_PYTHON_VERSION | cut -d. -f1)
+PYTHON_MINOR=$(echo $CURRENT_PYTHON_VERSION | cut -d. -f2)
+
+# Check if Python is less than 3.11
+if [ "$PYTHON_MAJOR" -lt 3 ] || ([ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 11 ]); then
+    echo -e "${YELLOW}⚠ Python 3.11+ required for modern packages${NC}"
+    echo -e "${YELLOW}Installing Python 3.11...${NC}"
+    
+    sudo apt install -y python3.11 python3.11-venv python3.11-dev
+    
+    if command -v python3.11 &> /dev/null; then
+        PYTHON_CMD="python3.11"
+        echo -e "${GREEN}✓ Python 3.11 installed successfully${NC}"
+        echo "New Python version: $(python3.11 --version)"
+    else
+        echo -e "${RED}ERROR: Failed to install Python 3.11${NC}"
+        echo -e "${YELLOW}Attempting to continue with Python $CURRENT_PYTHON_VERSION...${NC}"
+        echo -e "${YELLOW}Note: Some packages may not install correctly${NC}"
+        PYTHON_CMD="python3"
+    fi
+else
+    PYTHON_CMD="python3"
+    echo -e "${GREEN}✓ Python version is sufficient${NC}"
+fi
+
 # Step 4: Setup installation directory
 echo ""
 echo -e "${YELLOW}[4/8] Setting up installation directory...${NC}"
@@ -154,7 +186,7 @@ fi
 echo ""
 echo -e "${YELLOW}[6/8] Creating Python virtual environment...${NC}"
 cd "$INSTALL_DIR"
-python3 -m venv venv
+$PYTHON_CMD -m venv venv
 echo -e "${GREEN}✓ Virtual environment created${NC}"
 
 # Step 7: Install requirements
@@ -201,21 +233,21 @@ else
 fi
 
 # Create start script
-cat > start_server.sh << 'EOF'
+cat > start_server.sh << EOF
 #!/bin/bash
-cd "$(dirname "$0")"
+cd "\$(dirname "\$0")"
 source venv/bin/activate
-python3 server.py
+python server.py
 EOF
 chmod +x start_server.sh
 
 # Create stop script
-cat > stop_server.sh << 'EOF'
+cat > stop_server.sh << EOF
 #!/bin/bash
-PID=$(pgrep -f "python3 server.py")
-if [ ! -z "$PID" ]; then
-    kill $PID
-    echo "Server stopped (PID: $PID)"
+PID=\$(pgrep -f "python.*server.py")
+if [ ! -z "\$PID" ]; then
+    kill \$PID
+    echo "Server stopped (PID: \$PID)"
 else
     echo "Server is not running"
 fi
@@ -233,7 +265,7 @@ Type=simple
 User=$USER
 WorkingDirectory=$INSTALL_DIR
 ExecStartPre=/usr/bin/git pull origin main
-ExecStart=$INSTALL_DIR/venv/bin/python3 $INSTALL_DIR/server.py
+ExecStart=$INSTALL_DIR/venv/bin/python $INSTALL_DIR/server.py
 Restart=always
 RestartSec=10
 
@@ -293,6 +325,7 @@ echo ""
 echo -e "${YELLOW}  Hostname:${NC}        $HOSTNAME"
 echo -e "${YELLOW}  Local IP:${NC}        ${GREEN}${BOLD}$LOCAL_IP${NC}"
 echo -e "${YELLOW}  Port:${NC}            ${GREEN}${BOLD}$SERVER_PORT${NC}"
+echo -e "${YELLOW}  Python:${NC}          ${GREEN}${BOLD}$($PYTHON_CMD --version | awk '{print $2}')${NC}"
 echo ""
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
