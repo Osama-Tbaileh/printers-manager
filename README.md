@@ -12,6 +12,8 @@ A modern FastAPI-based REST API for managing ESC/POS thermal printers. This serv
 - 🔧 **Raw Commands** - Send raw ESC/POS commands via base64 or hex
 - 📚 **Auto Documentation** - Interactive API docs via Swagger UI
 - 🌐 **CORS Enabled** - Ready for web applications
+- ⚙️ **Environment Configuration** - Easy configuration via .env files
+- 🔐 **API Key Authentication** - Secure all endpoints with API key
 
 ## Requirements
 
@@ -25,7 +27,8 @@ A modern FastAPI-based REST API for managing ESC/POS thermal printers. This serv
 ### 1. Clone the Repository
 
 ```bash
-cd C:\Users\IzTech-OTbaileh\Desktop\printers-manager
+git clone https://github.com/YOUR_USERNAME/printers-manager.git
+cd printers-manager
 ```
 
 ### 2. Create Virtual Environment
@@ -47,6 +50,27 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
+### 4. Configure Environment (Required)
+
+Create a `.env` file:
+
+```bash
+cp .env.example .env
+nano .env
+```
+
+Set your API key:
+```env
+SERVER_HOST=0.0.0.0
+SERVER_PORT=3006
+API_KEY=your_secret_api_key_here
+```
+
+Generate a secure API key:
+```bash
+openssl rand -hex 32
+```
+
 ## Running the Server
 
 ### Development Mode
@@ -56,27 +80,27 @@ pip install -r requirements.txt
 python server.py
 ```
 
-The server will start on `http://0.0.0.0:3005`
+The server will start on `http://0.0.0.0:3006`
 
 ### Production Mode
 
 ```bash
-uvicorn server:app --host 0.0.0.0 --port 3005 --workers 4
+uvicorn server:app --host 0.0.0.0 --port 3006 --workers 4
 ```
 
 ### With Auto-Reload (Development)
 
 ```bash
-uvicorn server:app --host 0.0.0.0 --port 3005 --reload
+uvicorn server:app --host 0.0.0.0 --port 3006 --reload
 ```
 
 ## API Documentation
 
 Once the server is running, access the interactive API documentation:
 
-- **Swagger UI**: http://localhost:3005/docs
-- **ReDoc**: http://localhost:3005/redoc
-- **OpenAPI JSON**: http://localhost:3005/openapi.json
+- **Swagger UI**: http://localhost:3006/docs
+- **ReDoc**: http://localhost:3006/redoc
+- **OpenAPI JSON**: http://localhost:3006/openapi.json
 
 ## API Endpoints
 
@@ -88,12 +112,19 @@ GET /health
 
 Returns server health status.
 
+**Headers:**
+```
+X-API-Key: your_api_key_here
+```
+
 **Response:**
 ```json
 {
   "ok": true
 }
 ```
+
+**Note:** All endpoints require the `X-API-Key` header with your configured API key.
 
 ---
 
@@ -125,7 +156,8 @@ Print an image file to a thermal printer.
 
 **Example:**
 ```bash
-curl -X POST "http://localhost:3005/print-image?printer=TP80" \
+curl -X POST "http://localhost:3006/print-image?printer=TP80" \
+  -H "X-API-Key: your_api_key_here" \
   -F "image=@receipt.png"
 ```
 
@@ -157,13 +189,15 @@ Print formatted text to a thermal printer.
 
 **Example:**
 ```bash
-curl -X POST "http://localhost:3005/print-text?printer=TP80&bold=true&align=center" \
+curl -X POST "http://localhost:3006/print-text?printer=TP80&bold=true&align=center" \
+  -H "X-API-Key: your_api_key_here" \
   -F "text=Hello World!"
 ```
 
 **Example (JSON):**
 ```bash
-curl -X POST "http://localhost:3005/print-text-json?printer=TP80&bold=true" \
+curl -X POST "http://localhost:3006/print-text?printer=TP80&bold=true" \
+  -H "X-API-Key: your_api_key_here" \
   -H "Content-Type: application/json" \
   -d '{"text":"Hello World!"}'
 ```
@@ -185,7 +219,8 @@ Trigger printer beeper.
 
 **Example:**
 ```bash
-curl "http://localhost:3005/beep?printer=TP80&count=3&duration=5"
+curl -H "X-API-Key: your_api_key_here" \
+  "http://localhost:3006/beep?printer=TP80&count=3&duration=5"
 ```
 
 ---
@@ -205,7 +240,8 @@ Cut paper.
 
 **Example:**
 ```bash
-curl "http://localhost:3005/cut?printer=TP80&mode=full"
+curl -H "X-API-Key: your_api_key_here" \
+  "http://localhost:3006/cut?printer=TP80&mode=full"
 ```
 
 ---
@@ -224,7 +260,8 @@ Feed paper lines.
 
 **Example:**
 ```bash
-curl "http://localhost:3005/feed?printer=TP80&lines=5"
+curl -H "X-API-Key: your_api_key_here" \
+  "http://localhost:3006/feed?printer=TP80&lines=5"
 ```
 
 ---
@@ -245,7 +282,8 @@ Send pulse to open cash drawer.
 
 **Example:**
 ```bash
-curl "http://localhost:3005/drawer?printer=TP80"
+curl -H "X-API-Key: your_api_key_here" \
+  "http://localhost:3006/drawer?printer=TP80"
 ```
 
 ---
@@ -268,12 +306,14 @@ Send raw ESC/POS commands.
 **Example:**
 ```bash
 # Base64
-curl -X POST "http://localhost:3005/print-raw?printer=TP80" \
+curl -X POST "http://localhost:3006/print-raw?printer=TP80" \
+  -H "X-API-Key: your_api_key_here" \
   -H "Content-Type: application/json" \
   -d '{"base64":"G0BA"}'
 
 # Hex
-curl -X POST "http://localhost:3005/print-raw?printer=TP80" \
+curl -X POST "http://localhost:3006/print-raw?printer=TP80" \
+  -H "X-API-Key: your_api_key_here" \
   -H "Content-Type: application/json" \
   -d '{"hex":"1B40"}'
 ```
@@ -282,15 +322,28 @@ curl -X POST "http://localhost:3005/print-raw?printer=TP80" \
 
 ## Configuration
 
-Edit the following constants in `server.py`:
+Configuration is done via the `.env` file. See `.env.example` for all available options:
 
-```python
-UPLOAD_FOLDER = "uploads"                    # Temp folder for image uploads
-ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "bmp"}  # Allowed image types
-PRINT_SCRIPT = "print_image_any.py"         # Image conversion script path
-MAX_WIDTH_DEFAULT = "576"                    # Default max image width
-MAX_CONTENT_LENGTH = 20 * 1024 * 1024       # Max upload size (20MB)
+### **Required Settings:**
+```env
+SERVER_HOST=0.0.0.0              # Server host (0.0.0.0 = all interfaces)
+SERVER_PORT=3006                 # Server port
+API_KEY=your_api_key_here        # API key (generate with: openssl rand -hex 32)
 ```
+
+### **Optional Settings:**
+```env
+# File uploads
+UPLOAD_FOLDER=uploads            # Temporary upload folder
+ALLOWED_EXTENSIONS=png,jpg,jpeg,bmp  # Allowed image types
+MAX_UPLOAD_SIZE_MB=20            # Max upload size in MB
+
+# Printer defaults
+MAX_WIDTH_DEFAULT=576            # Default max width in pixels (80mm printer)
+PRINT_SCRIPT=                    # Path to print_image_any.py (auto-detected)
+```
+
+The server automatically loads these settings on startup.
 
 ## Printer Setup
 
@@ -326,6 +379,7 @@ All endpoints return JSON error responses:
 **Common HTTP Status Codes:**
 - `200` - Success
 - `400` - Bad Request (invalid parameters)
+- `401` - Unauthorized (invalid or missing API key)
 - `404` - Not Found (printer not found)
 - `413` - Payload Too Large
 - `500` - Server Error
@@ -336,19 +390,31 @@ All endpoints return JSON error responses:
 
 ```
 printers-manager/
-├── server.py              # FastAPI server
-├── print_image_any.py     # Image conversion script
-├── requirements.txt       # Python dependencies
-├── uploads/               # Temporary upload folder
-├── venv/                  # Virtual environment (created)
-└── README.md             # This file
+├── server.py                    # FastAPI server (main application)
+├── print_image_any.py           # Image to ESC/POS converter
+├── requirements.txt             # Python dependencies
+├── .env.example                 # Configuration template
+├── .gitignore                   # Git ignore rules
+├── README.md                    # This documentation
+├── printers-bash/               # USB setup scripts
+│   ├── usb_setup.sh            # Auto-setup script for Raspberry Pi
+│   ├── USB_README.md           # USB setup documentation
+│   └── .env.setup.example      # USB config template
+├── .env                         # Your configuration (create from .env.example)
+├── venv/                        # Virtual environment (created by you)
+└── uploads/                     # Temporary uploads (auto-created)
 ```
 
 ### Testing
 
-You can test all endpoints using the built-in Swagger UI at `http://localhost:3005/docs`
+You can test all endpoints using the built-in Swagger UI at `http://localhost:3006/docs`
 
-Or use curl/Postman/any HTTP client.
+**Note:** You'll need to authorize with your API key in Swagger UI:
+1. Click the "Authorize" button
+2. Enter your API key in the `X-API-Key` field
+3. Click "Authorize"
+
+Or use curl/Postman/any HTTP client with the `X-API-Key` header.
 
 ## Migration from Flask
 

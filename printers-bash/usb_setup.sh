@@ -25,31 +25,35 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m' # No Color
 
-# Configuration
-GITHUB_REPO="Osama-Tbaileh/printers-manager"  # ⚠️ CHANGE THIS!
-INSTALL_DIR="$HOME/printer-server"
-SERVER_PORT=3006
+# Load configuration from .env.setup if it exists
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$SCRIPT_DIR/.env.setup" ]; then
+    source "$SCRIPT_DIR/.env.setup"
+fi
+
+# Default Configuration
+GITHUB_REPO="${GITHUB_REPO:-iztech-team/printers-manager}"
+INSTALL_DIR="${INSTALL_DIR:-$HOME/printer-server}"
+SERVER_PORT="${SERVER_PORT:-3006}"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # AUTHENTICATION SETUP (for private repos)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 
-# For PUBLIC repos: Leave GITHUB_TOKEN empty
-# For PRIVATE repos: Choose ONE method below:
+# For PUBLIC repos: No configuration needed
+# For PRIVATE repos: Use .env.setup file (recommended)
 #
-# Method 1: Personal Access Token (RECOMMENDED for USB setup)
-#   1. Go to: https://github.com/settings/tokens
-#   2. Generate new token (classic) with 'repo' scope
-#   3. Paste token below:
-GITHUB_TOKEN="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"  # Example: "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+# Create .env.setup file with:
+#   GITHUB_TOKEN="ghp_your_token_here"
 #
-# Method 2: SSH (requires SSH key already on device)
-#   Set USE_SSH=true and make sure SSH key is configured
-USE_SSH=false
+# Or set defaults below (not recommended - use .env.setup instead):
+GITHUB_TOKEN="${GITHUB_TOKEN:-}"  # Leave empty, set in .env.setup
+USE_SSH="${USE_SSH:-false}"       # Set to true for SSH authentication
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 # Build repository URL based on authentication method
-if [ "$USE_SSH" = true ]; then
+
+if [ "$USE_SSH" = "true" ]; then
     REPO_URL="git@github.com:$GITHUB_REPO.git"
 elif [ ! -z "$GITHUB_TOKEN" ]; then
     REPO_URL="https://$GITHUB_TOKEN@github.com/$GITHUB_REPO.git"
@@ -149,6 +153,18 @@ else
     echo -e "${RED}WARNING: requirements.txt not found!${NC}"
 fi
 
+# Create .env file if it doesn't exist
+if [ ! -f ".env" ] && [ -f ".env.example" ]; then
+    echo ""
+    echo -e "${YELLOW}Creating .env file...${NC}"
+    cp .env.example .env
+    # Generate random API key
+    API_KEY=$(openssl rand -hex 32 2>/dev/null || cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 64 | head -n 1)
+    sed -i "s/your_secret_api_key_here/$API_KEY/" .env
+    echo -e "${GREEN}✓ .env file created with generated API key${NC}"
+    echo -e "${CYAN}  API Key: $API_KEY${NC}"
+fi
+
 # Step 8: Detect available printers
 echo ""
 echo -e "${YELLOW}[8/8] Detecting network printers...${NC}"
@@ -190,7 +206,7 @@ fi
 EOF
 chmod +x stop_server.sh
 
-# Create systemd service
+# Create systemd service with git pull before start
 cat > printer-server.service << EOF
 [Unit]
 Description=Printer Server
@@ -200,6 +216,7 @@ After=network.target
 Type=simple
 User=$USER
 WorkingDirectory=$INSTALL_DIR
+ExecStartPre=/usr/bin/git pull origin main
 ExecStart=$INSTALL_DIR/venv/bin/python3 $INSTALL_DIR/server.py
 Restart=always
 RestartSec=10
@@ -304,6 +321,7 @@ echo -e "  ${YELLOW}Re-enable auto-start on boot:${NC}"
 echo -e "    sudo systemctl enable printer-server"
 echo ""
 echo -e "  ${GREEN}✓ Server is configured to auto-start on boot!${NC}"
+echo -e "  ${GREEN}✓ Server auto-updates from GitHub on every restart!${NC}"
 echo ""
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""

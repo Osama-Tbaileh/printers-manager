@@ -4,6 +4,25 @@ This USB drive contains everything needed to automatically set up the printer se
 
 ---
 
+## ⚡ Quick Start (TL;DR)
+
+```bash
+# 1. Plug in USB
+# 2. Navigate to USB
+cd /media/pi/USB_NAME
+
+# 3. Run setup
+chmod +x usb_setup.sh
+sudo ./usb_setup.sh
+
+# 4. Wait 5-10 minutes ☕
+# 5. Done! Server auto-starts and displays IP & API key
+```
+
+**Before first use:** Edit `GITHUB_REPO` in `usb_setup.sh` (line 35) or create `.env.setup` file.
+
+---
+
 ## 📋 What This USB Does (FULLY AUTOMATED):
 
 When you run the setup script, it will:
@@ -12,13 +31,16 @@ When you run the setup script, it will:
 3. ✅ **Clone repository** from GitHub
 4. ✅ **Create Python virtual environment**
 5. ✅ **Install all required packages**
-6. ✅ **Detect network printers** automatically
-7. ✅ **Install systemd service** for auto-start on boot
-8. ✅ **Start server immediately** via systemd
-9. ✅ **Display IP address and port** for client devices
+6. ✅ **Generate secure API key** automatically
+7. ✅ **Detect network printers** automatically
+8. ✅ **Install systemd service** for auto-start on boot
+9. ✅ **Configure auto-updates** from GitHub on every restart
+10. ✅ **Start server immediately** via systemd
+11. ✅ **Display API key and access URLs**
 
 **100% Automatic - No user input required!**
 **Server auto-starts on every reboot!** 🔄
+**Server auto-updates from GitHub on every restart!** 🔄
 
 ---
 
@@ -57,37 +79,45 @@ When you run the setup script, it will:
 
 ---
 
-### **For Windows:**
+## ⚙️ Configuration (Optional)
 
-1. **Plug in the USB drive**
+### **Option 1: Use .env.setup file (Recommended)**
 
-2. **Open the USB folder in File Explorer**
+Create a `.env.setup` file in the `printers-bash/` directory:
 
-3. **Double-click: `usb_setup.bat`**
+```bash
+# Copy the example file
+cp .env.setup.example .env.setup
 
-4. **Follow the prompts!** ☕
+# Edit with your settings
+nano .env.setup
+```
 
----
+**.env.setup contents:**
+```bash
+# GitHub repository (format: username/repository)
+GITHUB_REPO=YOUR_GITHUB_USERNAME/printers-manager
 
-## ⚙️ Configuration Required
+# GitHub token for private repos (leave empty for public repos)
+GITHUB_TOKEN=
 
-### **Before First Use:**
+# Installation directory
+INSTALL_DIR=$HOME/printer-server
+```
 
-You need to update the GitHub repository URL in the setup scripts:
+### **Option 2: Edit usb_setup.sh directly**
 
-#### **In `usb_setup.sh` (line 29):**
+If you don't create `.env.setup`, you can edit the script defaults (line 35):
+
 ```bash
 GITHUB_REPO="YOUR_GITHUB_USERNAME/printers-manager"
 ```
-Change to your actual GitHub username/organization.
 
 ---
 
 ### **For PRIVATE Repositories:**
 
-If your repository is private, you need to add authentication:
-
-#### **Method 1: Personal Access Token (Recommended for USB)** 🔑
+Add your GitHub Personal Access Token to `.env.setup`:
 
 1. **Create a GitHub Personal Access Token:**
    - Go to: https://github.com/settings/tokens
@@ -97,50 +127,48 @@ If your repository is private, you need to add authentication:
    - Click "Generate token"
    - **Copy the token** (starts with `ghp_...`)
 
-2. **Add token to script (line 44):**
+2. **Add token to .env.setup:**
    ```bash
    GITHUB_TOKEN="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
    ```
-   Replace with your actual token.
 
 3. **Done!** The script will now clone your private repo.
-
-#### **Method 2: SSH Keys** 🔐
-
-If you prefer SSH (requires SSH key already on Raspberry Pi):
-
-1. **Set in script (line 48):**
-   ```bash
-   USE_SSH=true
-   ```
-
-2. **Make sure SSH key is configured:**
-   ```bash
-   ssh-keygen -t ed25519 -C "your_email@example.com"
-   cat ~/.ssh/id_ed25519.pub  # Copy this
-   # Add to GitHub: Settings → SSH Keys → New SSH Key
-   ```
 
 ---
 
 ### **For PUBLIC Repositories:**
 
-No changes needed! Leave `GITHUB_TOKEN=""` empty.
+No authentication needed! Just set your `GITHUB_REPO` and you're good to go.
 
 ---
 
 ## 📝 What Gets Installed:
 
+### **Files from GitHub (cloned automatically):**
 ```
-~/printer-server/                 (or custom location)
+~/printer-server/
 ├── server.py                     ← Main FastAPI server
-├── print_image_any.py           ← Image converter
-├── requirements.txt             ← Python packages
-├── venv/                        ← Virtual environment
-├── uploads/                     ← Image uploads folder
-├── start_server.sh              ← Easy start script
-├── printer_config.txt           ← Your printer IPs
-└── printer-server.service       ← Systemd service file
+├── print_image_any.py           ← Image converter/printer script
+├── requirements.txt             ← Python dependencies list
+├── .env.example                 ← Configuration template
+├── README.md                    ← Project documentation
+└── .gitignore                   ← Git ignore rules
+```
+
+### **Files created by setup script:**
+```
+~/printer-server/
+├── .env                         ← Server config (auto-generated with API key)
+├── venv/                        ← Python virtual environment
+├── start_server.sh              ← Manual start script
+├── stop_server.sh               ← Manual stop script
+└── printer-server.service       ← Systemd service file (copied to /etc/systemd/system/)
+```
+
+### **Folders created at runtime:**
+```
+~/printer-server/
+└── uploads/                     ← Temporary image storage (auto-created, auto-cleaned)
 ```
 
 ---
@@ -149,8 +177,10 @@ No changes needed! Leave `GITHUB_TOKEN=""` empty.
 
 ### **Server is Already Running!**
 The setup script automatically:
+- ✅ Generates a secure API key
 - ✅ Installs the systemd service
 - ✅ Enables auto-start on boot
+- ✅ Configures auto-updates from GitHub
 - ✅ Starts the server immediately
 
 ### **Manage the Server (Using systemd):**
@@ -186,8 +216,15 @@ sudo systemctl enable printer-server
 ```
 
 **Test Server API:**
+
+You'll need the API key that was displayed during setup. Check the `.env` file:
 ```bash
-curl http://localhost:3006/health
+cat ~/printer-server/.env
+```
+
+Then test with the API key:
+```bash
+curl -H "X-API-Key: YOUR_API_KEY_HERE" http://localhost:3006/health
 ```
 
 Should return: `{"ok":true}`
@@ -221,21 +258,28 @@ lpinfo -v
 
 ## 🧪 Test the Server:
 
+**First, get your API key:**
+```bash
+grep API_KEY ~/printer-server/.env
+```
+
 ### **Health Check:**
 ```bash
-curl http://localhost:3006/health
+curl -H "X-API-Key: YOUR_API_KEY" http://localhost:3006/health
 ```
 
 ### **Print Text:**
 ```bash
 curl -X POST "http://localhost:3006/print-text?printer=Kitchen_Printer&cut=true" \
+  -H "X-API-Key: YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"text":"Hello from USB setup!"}'
 ```
 
 ### **Beep:**
 ```bash
-curl "http://localhost:3006/beep?printer=Kitchen_Printer&count=2"
+curl -H "X-API-Key: YOUR_API_KEY" \
+  "http://localhost:3006/beep?printer=Kitchen_Printer&count=2"
 ```
 
 ---
@@ -245,9 +289,8 @@ curl "http://localhost:3006/beep?printer=Kitchen_Printer&count=2"
 | File | Purpose |
 |------|---------|
 | `usb_setup.sh` | Linux/Raspberry Pi setup script |
-| `usb_setup.bat` | Windows setup script |
-| `USB_README.md` | This file - instructions |
-| `QUICK_SETUP.txt` | Ultra-quick reference |
+| `.env.setup.example` | Configuration template (optional) |
+| `USB_README.md` | This file - complete documentation |
 
 ---
 
@@ -264,11 +307,6 @@ curl "http://localhost:3006/beep?printer=Kitchen_Printer&count=2"
 - ✅ All Python packages
 - ✅ System updates
 
-### **Windows:**
-- Git: https://git-scm.com/download/win
-- Python: https://www.python.org/downloads/
-- Internet connection
-
 ---
 
 ## ❓ Troubleshooting:
@@ -281,8 +319,9 @@ The script needs sudo access to:
 
 ### **"Failed to clone repository"**
 - Check internet connection
-- Verify GitHub repo URL is correct in script (line 29)
-- Make sure repository is public or you have access
+- Verify GitHub repo URL is correct in `.env.setup` or script (line 35)
+- For private repos, make sure `GITHUB_TOKEN` is set in `.env.setup`
+- Make sure repository exists and you have access
 
 ### **Server not accessible from other devices**
 - Check firewall settings: `sudo ufw allow 3006`
@@ -297,7 +336,12 @@ The script needs sudo access to:
 
 ### **View server logs**
 ```bash
-tail -f ~/printer-server/server.log
+sudo journalctl -u printer-server -f
+```
+
+### **Check API key**
+```bash
+cat ~/printer-server/.env | grep API_KEY
 ```
 
 ---
@@ -307,6 +351,8 @@ tail -f ~/printer-server/server.log
 Once setup is complete:
 - ✅ **Server is running** as systemd service
 - ✅ **Auto-starts on boot** (systemd enabled)
+- ✅ **Auto-updates from GitHub** on every restart
+- ✅ **API key generated** and displayed
 - ✅ **IP address displayed** on screen
 - ✅ **CUPS configured** and ready
 - ✅ **All dependencies installed**
@@ -315,9 +361,79 @@ Your server will be running at:
 - **Local:** http://localhost:3006
 - **Network:** http://YOUR_IP:3006 (shown by script)
 
-**Reboot the Raspberry Pi - server will start automatically!** 🔄
+**Important:** Save the API key displayed during setup! You'll need it for all API requests.
 
-Send print commands from any device on the same network!
+**Reboot the Raspberry Pi - server will start automatically and pull latest updates!** 🔄
+
+Send print commands from any device on the same network using the API key!
+
+---
+
+## 📀 How to Create This USB Drive
+
+### **Step 1: Prepare Your GitHub Repository**
+
+1. **Push your code to GitHub:**
+   ```bash
+   git init
+   git add .
+   git commit -m "Initial commit - Printer server"
+   git remote add origin https://github.com/YOUR_USERNAME/printers-manager.git
+   git branch -M main
+   git push -u origin main
+   ```
+
+2. **Make sure these files are in the repo:**
+   - ✅ `server.py` - Main FastAPI server
+   - ✅ `print_image_any.py` - Image converter script
+   - ✅ `requirements.txt` - Python dependencies
+   - ✅ `.env.example` - Configuration template
+   - ✅ `README.md` - Project documentation
+   - ✅ `.gitignore` - Prevents committing secrets
+
+3. **Files that should NOT be pushed** (already in `.gitignore`):
+   - ❌ `venv/` - Virtual environment
+   - ❌ `uploads/` - Temporary files
+   - ❌ `.env` - Contains secrets (API key)
+   - ❌ `printers-bash/.env.setup` - Contains GitHub token
+
+### **Step 2: Prepare the USB Drive**
+
+1. **Format USB** (optional but recommended):
+   - Format as **FAT32** or **exFAT**
+   - Label it: "PRINTER-SETUP"
+
+2. **Copy these files from `printers-bash/` directory to USB:**
+   ```
+   USB Drive/
+   ├── usb_setup.sh          ← Main setup script
+   ├── USB_README.md         ← This documentation
+   └── .env.setup.example    ← Configuration template (optional)
+   ```
+
+### **Step 3: Configure for Your Repo**
+
+**Option 1: Create .env.setup file (Recommended)**
+```bash
+cp .env.setup.example .env.setup
+nano .env.setup
+```
+
+**Option 2: Edit usb_setup.sh directly**
+Edit line 35 in `usb_setup.sh`:
+```bash
+GITHUB_REPO="YOUR_USERNAME/printers-manager"
+```
+
+### **Step 4: Test**
+Plug USB into Raspberry Pi and run `sudo ./usb_setup.sh`
+
+### **Updating the USB**
+
+When you update your server:
+1. Push changes to GitHub: `git push`
+2. That's it! The USB will pull the latest code automatically
+3. Only update USB files if you changed the setup script itself
 
 ---
 

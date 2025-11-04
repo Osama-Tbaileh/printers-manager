@@ -5,4 +5,5 @@ pydantic==2.9.2
 werkzeug==3.0.4
 Pillow==10.4.0
 numpy>=1.24.0
+python-dotenv==1.0.0
 
