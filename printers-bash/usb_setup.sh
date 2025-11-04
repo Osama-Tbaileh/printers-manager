@@ -113,32 +113,38 @@ echo "Current Python version: $CURRENT_PYTHON_VERSION"
 PYTHON_MAJOR=$(echo $CURRENT_PYTHON_VERSION | cut -d. -f1)
 PYTHON_MINOR=$(echo $CURRENT_PYTHON_VERSION | cut -d. -f2)
 
-# Check if Python is less than 3.11
-if [ "$PYTHON_MAJOR" -lt 3 ] || ([ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 11 ]); then
-    echo -e "${YELLOW}⚠ Python 3.11+ required for modern packages${NC}"
+# Check if Python is less than 3.8 (minimum requirement)
+if [ "$PYTHON_MAJOR" -lt 3 ] || ([ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 8 ]); then
+    echo -e "${YELLOW}⚠ Python 3.8+ required for modern packages${NC}"
     echo -e "${YELLOW}Current version: $CURRENT_PYTHON_VERSION${NC}"
     echo ""
     echo -e "${YELLOW}Adding deadsnakes PPA for newer Python versions...${NC}"
     
-    # Add deadsnakes PPA for Python 3.11
+    # Add deadsnakes PPA
     sudo apt install -y software-properties-common
     sudo add-apt-repository -y ppa:deadsnakes/ppa
     sudo apt update -qq
     
     echo -e "${GREEN}✓ PPA added${NC}"
-    echo -e "${YELLOW}Installing Python 3.11...${NC}"
     
-    sudo apt install -y python3.11 python3.11-venv python3.11-dev python3.11-distutils
+    # Try to install the newest available Python (try 3.11, 3.10, 3.9, 3.8 in order)
+    PYTHON_CMD=""
+    for version in 3.11 3.10 3.9 3.8; do
+        echo -e "${YELLOW}Trying to install Python $version...${NC}"
+        if sudo apt install -y python$version python$version-venv python$version-dev 2>/dev/null; then
+            if command -v python$version &> /dev/null; then
+                PYTHON_CMD="python$version"
+                echo -e "${GREEN}✓ Python $version installed successfully${NC}"
+                echo "Python version: $(python$version --version)"
+                break
+            fi
+        fi
+    done
     
-    if command -v python3.11 &> /dev/null; then
-        PYTHON_CMD="python3.11"
-        echo -e "${GREEN}✓ Python 3.11 installed successfully${NC}"
-        echo "New Python version: $(python3.11 --version)"
-    else
-        echo -e "${RED}ERROR: Failed to install Python 3.11${NC}"
+    if [ -z "$PYTHON_CMD" ]; then
+        echo -e "${RED}ERROR: Failed to install any newer Python version${NC}"
         echo -e "${YELLOW}Attempting to continue with Python $CURRENT_PYTHON_VERSION...${NC}"
-        echo -e "${RED}WARNING: Package installation may fail!${NC}"
-        echo -e "${YELLOW}You may need to upgrade your OS or manually install Python 3.11${NC}"
+        echo -e "${RED}WARNING: Package installation will likely fail!${NC}"
         PYTHON_CMD="python3"
     fi
 else
