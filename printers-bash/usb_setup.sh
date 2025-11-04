@@ -116,9 +116,19 @@ PYTHON_MINOR=$(echo $CURRENT_PYTHON_VERSION | cut -d. -f2)
 # Check if Python is less than 3.11
 if [ "$PYTHON_MAJOR" -lt 3 ] || ([ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 11 ]); then
     echo -e "${YELLOW}⚠ Python 3.11+ required for modern packages${NC}"
+    echo -e "${YELLOW}Current version: $CURRENT_PYTHON_VERSION${NC}"
+    echo ""
+    echo -e "${YELLOW}Adding deadsnakes PPA for newer Python versions...${NC}"
+    
+    # Add deadsnakes PPA for Python 3.11
+    sudo apt install -y software-properties-common
+    sudo add-apt-repository -y ppa:deadsnakes/ppa
+    sudo apt update -qq
+    
+    echo -e "${GREEN}✓ PPA added${NC}"
     echo -e "${YELLOW}Installing Python 3.11...${NC}"
     
-    sudo apt install -y python3.11 python3.11-venv python3.11-dev
+    sudo apt install -y python3.11 python3.11-venv python3.11-dev python3.11-distutils
     
     if command -v python3.11 &> /dev/null; then
         PYTHON_CMD="python3.11"
@@ -127,12 +137,13 @@ if [ "$PYTHON_MAJOR" -lt 3 ] || ([ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" 
     else
         echo -e "${RED}ERROR: Failed to install Python 3.11${NC}"
         echo -e "${YELLOW}Attempting to continue with Python $CURRENT_PYTHON_VERSION...${NC}"
-        echo -e "${YELLOW}Note: Some packages may not install correctly${NC}"
+        echo -e "${RED}WARNING: Package installation may fail!${NC}"
+        echo -e "${YELLOW}You may need to upgrade your OS or manually install Python 3.11${NC}"
         PYTHON_CMD="python3"
     fi
 else
     PYTHON_CMD="python3"
-    echo -e "${GREEN}✓ Python version is sufficient${NC}"
+    echo -e "${GREEN}✓ Python version is sufficient ($CURRENT_PYTHON_VERSION)${NC}"
 fi
 
 # Step 4: Setup installation directory
