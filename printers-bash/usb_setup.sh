@@ -118,20 +118,36 @@ fi
 # Step 5: Clone repository
 echo ""
 echo -e "${YELLOW}[5/8] Cloning repository from GitHub...${NC}"
-echo "Repository: $REPO_URL"
-if git clone "$REPO_URL" "$INSTALL_DIR" 2>&1 | grep -v "Cloning into"; then
-    echo -e "${GREEN}✓ Repository cloned successfully${NC}"
+# Don't print the URL if it contains a token (security)
+if [ ! -z "$GITHUB_TOKEN" ]; then
+    echo "Repository: https://***TOKEN***@github.com/$GITHUB_REPO.git"
 else
+    echo "Repository: $REPO_URL"
+fi
+
+# Clone the repository
+if git clone "$REPO_URL" "$INSTALL_DIR" 2>&1; then
+    # Verify the clone actually succeeded
     if [ -d "$INSTALL_DIR/.git" ]; then
         echo -e "${GREEN}✓ Repository cloned successfully${NC}"
     else
-        echo -e "${RED}ERROR: Failed to clone repository!${NC}"
-        echo "Please check:"
+        echo -e "${RED}ERROR: Repository clone failed!${NC}"
+        echo "The directory was not created. Please check:"
         echo "  1. Your internet connection"
-        echo "  2. The repository URL is correct: $REPO_URL"
-        echo "  3. The repository is public or you have access"
+        echo "  2. Repository name: $GITHUB_REPO"
+        echo "  3. If private, check your GITHUB_TOKEN in .env.setup"
+        echo "  4. Token must start with 'ghp_' (lowercase)"
         exit 1
     fi
+else
+    echo -e "${RED}ERROR: Failed to clone repository!${NC}"
+    echo "Please check:"
+    echo "  1. Your internet connection"
+    echo "  2. Repository name: $GITHUB_REPO"
+    echo "  3. If private, check your GITHUB_TOKEN in .env.setup"
+    echo "  4. Token format must be: ghp_xxxxxxxxxxxx (lowercase 'ghp_')"
+    echo "  5. Generate token at: https://github.com/settings/tokens"
+    exit 1
 fi
 
 # Step 6: Create virtual environment
