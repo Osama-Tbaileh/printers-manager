@@ -77,7 +77,7 @@ echo -e "${GREEN}✓ System updated${NC}"
 # Step 2: Install CUPS and dependencies
 echo ""
 echo -e "${YELLOW}[2/8] Installing CUPS and dependencies...${NC}"
-sudo apt install -y cups cups-client git python3 python3-pip python3-venv python3-dev build-essential
+sudo apt install -y cups cups-client git python3 python3-pip python3-venv python3-dev build-essential lsof
 echo -e "${GREEN}✓ CUPS installed${NC}"
 
 # Start and enable CUPS service
@@ -226,6 +226,29 @@ if [ ! -f ".env" ] && [ -f ".env.example" ]; then
     echo -e "${GREEN}✓ .env file created${NC}"
 fi
 
+# Check if port 3006 is in use and free it if needed
+echo ""
+echo -e "${YELLOW}Checking port $SERVER_PORT availability...${NC}"
+PORT_PID=$(lsof -ti:$SERVER_PORT 2>/dev/null)
+if [ ! -z "$PORT_PID" ]; then
+    echo -e "${YELLOW}⚠ Port $SERVER_PORT is in use by process $PORT_PID${NC}"
+    PROCESS_NAME=$(ps -p $PORT_PID -o comm= 2>/dev/null)
+    echo -e "${YELLOW}  Process: $PROCESS_NAME${NC}"
+    echo -e "${YELLOW}  Stopping process to free the port...${NC}"
+    kill -9 $PORT_PID 2>/dev/null
+    sleep 2
+    # Verify port is now free
+    if lsof -ti:$SERVER_PORT >/dev/null 2>&1; then
+        echo -e "${RED}✗ Failed to free port $SERVER_PORT${NC}"
+        echo -e "${RED}  Please manually stop the process and try again${NC}"
+        exit 1
+    else
+        echo -e "${GREEN}✓ Port $SERVER_PORT is now free${NC}"
+    fi
+else
+    echo -e "${GREEN}✓ Port $SERVER_PORT is available${NC}"
+fi
+
 # Step 8: Detect available printers
 echo ""
 echo -e "${YELLOW}[8/8] Detecting network printers...${NC}"
@@ -324,6 +347,69 @@ else
     echo -e "${RED}✗ Service failed to start. Checking logs...${NC}"
     sudo journalctl -u printer-server -n 20 --no-pager
     exit 1
+fi
+
+# Test all configured printers
+echo ""
+echo -e "${YELLOW}▸ Testing all configured printers...${NC}"
+CONFIGURED_PRINTERS=$(lpstat -p 2>/dev/null | awk '{print $2}')
+if [ -z "$CONFIGURED_PRINTERS" ]; then
+    echo -e "${YELLOW}⚠ No printers configured yet${NC}"
+    echo "You can add printers with: sudo lpadmin -p PrinterName -v socket://IP:9100 -E"
+else
+    PRINTER_COUNT=$(echo "$CONFIGURED_PRINTERS" | wc -l)
+    echo -e "${CYAN}Found $PRINTER_COUNT printer(s) configured${NC}"
+    echo ""
+    
+    # Create test message with server info
+    TEST_MESSAGE="╔══════════════════════════════════╗
+║   PRINTER SERVER TEST PRINT   ║
+╚══════════════════════════════════╝
+
+Server Information:
+- Hostname: $HOSTNAME
+- IP Address: $LOCAL_IP
+- Port: $SERVER_PORT
+- Time: $(date '+%Y-%m-%d %H:%M:%S')
+
+This is a test print from the printer
+server auto-setup script.
+
+If you can read this, your printer
+is working correctly! ✓
+
+═════════════════════════════════════
+
+Available Printers:
+$CONFIGURED_PRINTERS
+
+═════════════════════════════════════"
+
+    # Test each printer
+    WORKING_PRINTERS=0
+    FAILED_PRINTERS=0
+    
+    while IFS= read -r printer; do
+        echo -e "${YELLOW}  Testing: $printer${NC}"
+        
+        # Send test print via API
+        if echo "$TEST_MESSAGE" | lp -d "$printer" 2>/dev/null; then
+            echo -e "${GREEN}    ✓ Successfully sent test print${NC}"
+            WORKING_PRINTERS=$((WORKING_PRINTERS + 1))
+        else
+            echo -e "${RED}    ✗ Failed to send test print${NC}"
+            FAILED_PRINTERS=$((FAILED_PRINTERS + 1))
+        fi
+    done <<< "$CONFIGURED_PRINTERS"
+    
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${BOLD}Printer Test Results:${NC}"
+    echo -e "${GREEN}  ✓ Working: $WORKING_PRINTERS${NC}"
+    if [ $FAILED_PRINTERS -gt 0 ]; then
+        echo -e "${RED}  ✗ Failed: $FAILED_PRINTERS${NC}"
+    fi
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 fi
 
 # Display server information
