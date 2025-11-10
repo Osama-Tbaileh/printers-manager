@@ -417,10 +417,11 @@ else
         $PYTHON_CMD << EOF
 from PIL import Image, ImageDraw, ImageFont
 import textwrap
+import os
 
 # Create image (576px width for 80mm thermal printer)
 width = 576
-height = 1400
+height = 1600
 img = Image.new('RGB', (width, height), 'white')
 draw = ImageDraw.Draw(img)
 
@@ -435,6 +436,31 @@ except:
 
 y = 20
 padding = 20
+
+# Try to load company logo
+logo_path = "$INSTALL_DIR/logo.png"
+if os.path.exists(logo_path):
+    try:
+        logo = Image.open(logo_path)
+        # Resize logo to fit width (max 400px wide)
+        logo_max_width = 400
+        if logo.width > logo_max_width:
+            ratio = logo_max_width / logo.width
+            new_height = int(logo.height * ratio)
+            logo = logo.resize((logo_max_width, new_height), Image.Resampling.LANCZOS)
+        
+        # Center the logo
+        logo_x = (width - logo.width) // 2
+        # Convert to RGB if needed (for PNG with transparency)
+        if logo.mode == 'RGBA':
+            # Create white background
+            logo_bg = Image.new('RGB', logo.size, 'white')
+            logo_bg.paste(logo, mask=logo.split()[3])
+            logo = logo_bg
+        img.paste(logo, (logo_x, y))
+        y += logo.height + 20
+    except:
+        pass  # If logo fails to load, just skip it
 
 # Title
 title = "PRINTER SERVER TEST"
@@ -526,9 +552,62 @@ timestamp = "$(date '+%Y-%m-%d %H:%M:%S')"
 bbox = draw.textbbox((0, 0), timestamp, font=small_font)
 ts_width = bbox[2] - bbox[0]
 draw.text(((width - ts_width) // 2, y), timestamp, fill='gray', font=small_font)
+y += 30
+
+# Lovely closing message
+y += 10
+draw.line([(padding, y), (width - padding, y)], fill='black', width=2)
+y += 25
+
+# Fun celebratory header
+celebration = "🎊 YAY! IT WORKS! 🎊"
+bbox = draw.textbbox((0, 0), celebration, font=header_font)
+cel_width = bbox[2] - bbox[0]
+draw.text(((width - cel_width) // 2, y), celebration, fill='green', font=header_font)
+y += 40
+
+closing_messages = [
+    "✨ Congratulations! ✨",
+    "Your printer is now part of our",
+    "awesome printing family!",
+    "",
+    "🎉 Setup completed like a boss! 🎉",
+    "",
+    "If this printer misbehaves,",
+    "give it a gentle tap and remind it",
+    "that we believe in it! 😊",
+    "",
+    "Need help? We got your back!",
+    "Contact your friendly neighborhood",
+    "system administrator.",
+    "",
+    "Now go forth and print",
+    "amazing things! 🚀",
+    "",
+    "P.S. This printer thinks",
+    "you're pretty cool! 😎",
+    "",
+    "━━━━━━━━━━━━━━━━━━━━━━━━━",
+    "",
+    "Made with ❤️ and lots of ☕",
+    "Have an absolutely fantastic day!",
+    "You deserve it! 🌟✨🎈",
+]
+
+for line in closing_messages:
+    bbox = draw.textbbox((0, 0), line, font=small_font)
+    line_width = bbox[2] - bbox[0]
+    # Add some color to special lines
+    color = 'black'
+    if '❤️' in line or '☕' in line or '🌟' in line:
+        color = 'purple'
+    elif 'awesome' in line or 'boss' in line or 'amazing' in line:
+        color = 'blue'
+    draw.text(((width - line_width) // 2, y), line, fill=color, font=small_font)
+    y += 22
 
 # Crop to actual content height
-img = img.crop((0, 0, width, y + 40))
+img = img.crop((0, 0, width, y + 30))
 
 # Save image
 img.save("$TEMP_IMAGE")
@@ -540,6 +619,25 @@ EOF
             # Use the print_image_any.py script to send the image
             if $PYTHON_CMD "$INSTALL_DIR/print_image_any.py" "$TEMP_IMAGE" --max-width 576 --mode gsv0 --align center 2>/dev/null | lp -d "$FIRST_PRINTER" -o raw 2>/dev/null; then
                 echo -e "${GREEN}    ✓ Successfully sent test print (image)${NC}"
+                
+                # Send beep command (3 beeps, 200ms each)
+                sleep 1
+                echo -e "${YELLOW}    ▸ Sending beep command...${NC}"
+                if echo -en "\x1b\x42\x03\x05" | lp -d "$FIRST_PRINTER" -o raw 2>/dev/null; then
+                    echo -e "${GREEN}    ✓ Beep command sent${NC}"
+                else
+                    echo -e "${YELLOW}    ⚠ Beep command sent but printer may not support it${NC}"
+                fi
+                
+                # Send cut command (feed 3 lines then partial cut)
+                sleep 1
+                echo -e "${YELLOW}    ▸ Sending cut command...${NC}"
+                if echo -en "\x1b\x64\x03\x1d\x56\x01" | lp -d "$FIRST_PRINTER" -o raw 2>/dev/null; then
+                    echo -e "${GREEN}    ✓ Paper cut command sent${NC}"
+                else
+                    echo -e "${YELLOW}    ⚠ Cut command sent but printer may not support it${NC}"
+                fi
+                
                 WORKING_PRINTERS=$((WORKING_PRINTERS + 1))
             else
                 echo -e "${RED}    ✗ Failed to send test print${NC}"
