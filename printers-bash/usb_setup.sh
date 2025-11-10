@@ -396,15 +396,22 @@ else
         echo -e "${YELLOW}  Testing physical printer: $uri${NC}"
         echo -e "${CYAN}    Assigned names: $PRINTER_NAMES${NC}"
         
-        # Get printer IP and port from URI
-        PRINTER_IP=$(echo "$uri" | grep -oP '(?<=socket://|https?://)[0-9.]+' || echo "N/A")
-        PRINTER_PORT=$(echo "$uri" | grep -oP '(?<=:)[0-9]+$' || echo "9100")
+        # Get printer IP and port from URI (simpler method without lookbehind)
+        PRINTER_IP=$(echo "$uri" | sed -n 's/.*:\/\/\([0-9.]*\).*/\1/p')
+        if [ -z "$PRINTER_IP" ]; then
+            PRINTER_IP="unknown"
+        fi
+        PRINTER_PORT=$(echo "$uri" | sed -n 's/.*:\([0-9]*\)$/\1/p')
+        if [ -z "$PRINTER_PORT" ]; then
+            PRINTER_PORT="9100"
+        fi
         
         # Count how many names are assigned
         NAME_COUNT=$(echo "$PRINTER_NAMES" | tr ',' '\n' | wc -l)
         
         # Create a Python script to generate the receipt image
-        TEMP_IMAGE="/tmp/printer_test_${PRINTER_IP//\./_}.png"
+        # Use timestamp to avoid conflicts with invalid characters
+        TEMP_IMAGE="/tmp/printer_test_$(date +%s)_${RANDOM}.png"
         
         # Generate receipt image using Python
         $PYTHON_CMD << EOF
