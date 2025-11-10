@@ -77,7 +77,7 @@ echo -e "${GREEN}✓ System updated${NC}"
 # Step 2: Install CUPS and dependencies
 echo ""
 echo -e "${YELLOW}[2/8] Installing CUPS and dependencies...${NC}"
-sudo apt install -y cups cups-client git python3 python3-pip python3-venv python3-dev build-essential lsof
+sudo apt install -y cups cups-client git python3 python3-pip python3-venv python3-dev build-essential lsof fonts-dejavu fonts-dejavu-core
 echo -e "${GREEN}✓ CUPS installed${NC}"
 
 # Start and enable CUPS service
@@ -328,7 +328,12 @@ echo -e "${NC}"
 echo ""
 echo -e "${CYAN}${BOLD}📡 Getting network information...${NC}"
 HOSTNAME=$(hostname)
-LOCAL_IP=$(hostname -I | awk '{print $1}')
+# Get the correct local IP (prioritize 192.168.x.x and 10.x.x.x ranges)
+LOCAL_IP=$(hostname -I | tr ' ' '\n' | grep -E '^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)' | head -n1)
+# Fallback to first IP if no private IP found
+if [ -z "$LOCAL_IP" ]; then
+    LOCAL_IP=$(hostname -I | awk '{print $1}')
+fi
 
 echo ""
 echo -e "${YELLOW}▸ Starting server via systemd service...${NC}"
@@ -359,52 +364,192 @@ if [ -z "$CONFIGURED_PRINTERS" ]; then
 else
     PRINTER_COUNT=$(echo "$CONFIGURED_PRINTERS" | wc -l)
     echo -e "${CYAN}Found $PRINTER_COUNT printer(s) configured${NC}"
-    echo ""
     
-    # Create test message with server info
-    TEST_MESSAGE="╔══════════════════════════════════╗
-║   PRINTER SERVER TEST PRINT   ║
-╚══════════════════════════════════╝
-
-Server Information:
-- Hostname: $HOSTNAME
-- IP Address: $LOCAL_IP
-- Port: $SERVER_PORT
-- Time: $(date '+%Y-%m-%d %H:%M:%S')
-
-This is a test print from the printer
-server auto-setup script.
-
-If you can read this, your printer
-is working correctly! ✓
-
-═════════════════════════════════════
-
-Available Printers:
-$CONFIGURED_PRINTERS
-
-═════════════════════════════════════"
-
-    # Test each printer
-    WORKING_PRINTERS=0
-    FAILED_PRINTERS=0
+    # Group printers by physical device (URI)
+    declare -A PRINTER_GROUPS
+    declare -A PRINTER_URIS
     
     while IFS= read -r printer; do
-        echo -e "${YELLOW}  Testing: $printer${NC}"
-        
-        # Send test print via API
-        if echo "$TEST_MESSAGE" | lp -d "$printer" 2>/dev/null; then
-            echo -e "${GREEN}    ✓ Successfully sent test print${NC}"
-            WORKING_PRINTERS=$((WORKING_PRINTERS + 1))
+        PRINTER_URI=$(lpstat -v "$printer" 2>/dev/null | grep -oP 'device for \S+: \K.*' || echo "unknown")
+        # Store printer names grouped by URI
+        if [ -n "${PRINTER_GROUPS[$PRINTER_URI]}" ]; then
+            PRINTER_GROUPS[$PRINTER_URI]="${PRINTER_GROUPS[$PRINTER_URI]}, $printer"
         else
-            echo -e "${RED}    ✗ Failed to send test print${NC}"
-            FAILED_PRINTERS=$((FAILED_PRINTERS + 1))
+            PRINTER_GROUPS[$PRINTER_URI]="$printer"
+            PRINTER_URIS[$PRINTER_URI]="$PRINTER_URI"
         fi
     done <<< "$CONFIGURED_PRINTERS"
     
+    PHYSICAL_PRINTER_COUNT=${#PRINTER_GROUPS[@]}
+    echo -e "${CYAN}Grouped into $PHYSICAL_PRINTER_COUNT physical printer(s)${NC}"
+    echo -e "${CYAN}Sending test print to each physical printer...${NC}"
     echo ""
+    
+    # Test each physical printer (unique URI)
+    WORKING_PRINTERS=0
+    FAILED_PRINTERS=0
+    
+    for uri in "${!PRINTER_GROUPS[@]}"; do
+        PRINTER_NAMES="${PRINTER_GROUPS[$uri]}"
+        FIRST_PRINTER=$(echo "$PRINTER_NAMES" | cut -d',' -f1 | xargs)
+        
+        echo -e "${YELLOW}  Testing physical printer: $uri${NC}"
+        echo -e "${CYAN}    Assigned names: $PRINTER_NAMES${NC}"
+        
+        # Get printer IP and port from URI
+        PRINTER_IP=$(echo "$uri" | grep -oP '(?<=socket://|https?://)[0-9.]+' || echo "N/A")
+        PRINTER_PORT=$(echo "$uri" | grep -oP '(?<=:)[0-9]+$' || echo "9100")
+        
+        # Count how many names are assigned
+        NAME_COUNT=$(echo "$PRINTER_NAMES" | tr ',' '\n' | wc -l)
+        
+        # Create a Python script to generate the receipt image
+        TEMP_IMAGE="/tmp/printer_test_${PRINTER_IP//\./_}.png"
+        
+        # Generate receipt image using Python
+        $PYTHON_CMD << EOF
+from PIL import Image, ImageDraw, ImageFont
+import textwrap
+
+# Create image (576px width for 80mm thermal printer)
+width = 576
+height = 1400
+img = Image.new('RGB', (width, height), 'white')
+draw = ImageDraw.Draw(img)
+
+# Use default font
+try:
+    title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 24)
+    header_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 18)
+    normal_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 16)
+    small_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14)
+except:
+    title_font = header_font = normal_font = small_font = ImageFont.load_default()
+
+y = 20
+padding = 20
+
+# Title
+title = "PRINTER SERVER TEST"
+bbox = draw.textbbox((0, 0), title, font=title_font)
+title_width = bbox[2] - bbox[0]
+draw.text(((width - title_width) // 2, y), title, fill='black', font=title_font)
+y += 50
+
+# Draw line
+draw.line([(padding, y), (width - padding, y)], fill='black', width=2)
+y += 20
+
+# Server Information Section
+draw.text((padding, y), "SERVER INFORMATION", fill='black', font=header_font)
+y += 30
+
+info_lines = [
+    ("Server IP:", "$LOCAL_IP"),
+    ("Server Port:", "$SERVER_PORT"),
+    ("Hostname:", "$HOSTNAME"),
+    ("Access URL:", "http://$LOCAL_IP:$SERVER_PORT"),
+    ("Installation:", "$INSTALL_DIR"),
+]
+
+for label, value in info_lines:
+    draw.text((padding, y), label, fill='black', font=normal_font)
+    draw.text((padding + 150, y), value, fill='blue', font=normal_font)
+    y += 25
+
+y += 10
+draw.line([(padding, y), (width - padding, y)], fill='black', width=2)
+y += 20
+
+# Printer Information Section
+draw.text((padding, y), "PRINTER INFORMATION", fill='black', font=header_font)
+y += 30
+
+printer_lines = [
+    ("Printer IP:", "$PRINTER_IP"),
+    ("Printer Port:", "$PRINTER_PORT"),
+    ("Assigned Names:", "$NAME_COUNT"),
+]
+
+for label, value in printer_lines:
+    draw.text((padding, y), label, fill='black', font=normal_font)
+    draw.text((padding + 150, y), str(value), fill='green', font=normal_font)
+    y += 25
+
+# Print assigned names (wrap if needed)
+y += 5
+names_text = "$PRINTER_NAMES"
+wrapped_names = textwrap.fill(names_text, width=40)
+for line in wrapped_names.split('\n'):
+    draw.text((padding + 20, y), line, fill='black', font=small_font)
+    y += 20
+
+y += 10
+draw.line([(padding, y), (width - padding, y)], fill='black', width=2)
+y += 20
+
+# Success message
+success_msg = "✓ Printer is working correctly!"
+bbox = draw.textbbox((0, 0), success_msg, font=header_font)
+msg_width = bbox[2] - bbox[0]
+draw.text(((width - msg_width) // 2, y), success_msg, fill='green', font=header_font)
+y += 40
+
+# Instructions
+instructions = [
+    "Use the Server IP and Port above",
+    "to send print jobs via the API.",
+    "",
+    "You can use any of the assigned",
+    "printer names listed above.",
+]
+
+for line in instructions:
+    bbox = draw.textbbox((0, 0), line, font=small_font)
+    line_width = bbox[2] - bbox[0]
+    draw.text(((width - line_width) // 2, y), line, fill='black', font=small_font)
+    y += 20
+
+y += 10
+draw.line([(padding, y), (width - padding, y)], fill='black', width=2)
+y += 20
+
+# Timestamp
+timestamp = "$(date '+%Y-%m-%d %H:%M:%S')"
+bbox = draw.textbbox((0, 0), timestamp, font=small_font)
+ts_width = bbox[2] - bbox[0]
+draw.text(((width - ts_width) // 2, y), timestamp, fill='gray', font=small_font)
+
+# Crop to actual content height
+img = img.crop((0, 0, width, y + 40))
+
+# Save image
+img.save("$TEMP_IMAGE")
+print("Image created: $TEMP_IMAGE")
+EOF
+
+        # Check if image was created successfully
+        if [ -f "$TEMP_IMAGE" ]; then
+            # Use the print_image_any.py script to send the image
+            if $PYTHON_CMD "$INSTALL_DIR/print_image_any.py" "$TEMP_IMAGE" --max-width 576 --mode gsv0 --align center 2>/dev/null | lp -d "$FIRST_PRINTER" -o raw 2>/dev/null; then
+                echo -e "${GREEN}    ✓ Successfully sent test print (image)${NC}"
+                WORKING_PRINTERS=$((WORKING_PRINTERS + 1))
+            else
+                echo -e "${RED}    ✗ Failed to send test print${NC}"
+                FAILED_PRINTERS=$((FAILED_PRINTERS + 1))
+            fi
+            # Clean up temp image
+            rm -f "$TEMP_IMAGE"
+        else
+            echo -e "${RED}    ✗ Failed to generate test image${NC}"
+            FAILED_PRINTERS=$((FAILED_PRINTERS + 1))
+        fi
+        echo ""
+    done
+
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${BOLD}Printer Test Results:${NC}"
+    echo -e "${CYAN}  Physical Printers: $PHYSICAL_PRINTER_COUNT${NC}"
     echo -e "${GREEN}  ✓ Working: $WORKING_PRINTERS${NC}"
     if [ $FAILED_PRINTERS -gt 0 ]; then
         echo -e "${RED}  ✗ Failed: $FAILED_PRINTERS${NC}"
