@@ -3,8 +3,7 @@ import uuid
 import base64
 import binascii
 import subprocess
-from functools import wraps
-from typing import Optional, Callable
+from typing import Optional
 
 from fastapi import (
     FastAPI,
@@ -12,7 +11,6 @@ from fastapi import (
     Query,
     File,
     UploadFile,
-    Form,
     HTTPException,
     Depends,
 )
@@ -24,25 +22,14 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Configuration from environment variables with defaults
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# All these can be customized via .env file
-# See .env.example for all available options
-
-# Server settings
-SERVER_HOST = os.getenv("SERVER_HOST", "0.0.0.0")
-SERVER_PORT = int(os.getenv("SERVER_PORT", "3006"))
-API_KEY = os.getenv("API_KEY")  # Required - no default
-
-# File upload settings
+# Configuration - can be customized via .env file
 UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", "uploads")
 ALLOWED_EXTENSIONS = set(os.getenv("ALLOWED_EXTENSIONS", "png,jpg,jpeg,bmp").split(","))
-MAX_CONTENT_LENGTH = int(os.getenv("MAX_UPLOAD_SIZE_MB", "20")) * 1024 * 1024
-
-# Printer settings
 PRINT_SCRIPT = os.getenv("PRINT_SCRIPT") or os.path.join(os.path.dirname(__file__), "print_image_any.py")
 MAX_WIDTH_DEFAULT = os.getenv("MAX_WIDTH_DEFAULT", "576")
+MAX_CONTENT_LENGTH = int(os.getenv("MAX_UPLOAD_SIZE_MB", "20")) * 1024 * 1024
+SERVER_HOST = os.getenv("SERVER_HOST", "0.0.0.0")
+SERVER_PORT = int(os.getenv("SERVER_PORT", "3006"))
 
 app = FastAPI()
 
@@ -58,17 +45,6 @@ app.add_middleware(
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 
-# API Key authentication
-async def verify_api_key(request: Request):
-    if not API_KEY:
-        raise HTTPException(status_code=500, detail={"error": "API_KEY not configured"})
-    
-    provided_key = request.headers.get("X-API-Key")
-    if not provided_key or provided_key != API_KEY:
-        raise HTTPException(status_code=401, detail={"error": "Invalid or missing API key"})
-    return True
-
-
 def json_error(message: str, status: int = 400, **extra):
     payload = {"error": message}
     if extra:
@@ -80,11 +56,6 @@ def is_allowed_file(filename: str) -> bool:
     return "." in filename and (
         filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
     )
-
-
-class PrinterContext:
-    def __init__(self):
-        self.printer: Optional[str] = None
 
 
 def require_printer(
@@ -225,34 +196,16 @@ CODEPAGE_MAP = {
 
 
 # Error handlers
-@app.exception_handler(400)
-async def handle_400(request: Request, exc: HTTPException):
-    return json_error(str(exc.detail), 400)
-
-
-@app.exception_handler(404)
-async def handle_404(request: Request, exc: HTTPException):
-    if isinstance(exc.detail, dict):
-        return JSONResponse(content=exc.detail, status_code=404)
-    return json_error("Not found", 404)
-
-
-@app.exception_handler(413)
-async def handle_413(request: Request, exc: HTTPException):
-    return json_error("Payload too large", 413)
-
-
-@app.exception_handler(500)
-async def handle_500(request: Request, exc: Exception):
-    return json_error("Server error", 500)
-
-
-# Custom exception handler for HTTPException with dict detail
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     if isinstance(exc.detail, dict):
         return JSONResponse(content=exc.detail, status_code=exc.status_code)
     return json_error(str(exc.detail), exc.status_code)
+
+
+@app.exception_handler(500)
+async def handle_500(request: Request, exc: Exception):
+    return json_error("Server error", 500)
 
 
 # Middleware to enforce max content length
@@ -265,7 +218,7 @@ async def limit_upload_size(request: Request, call_next):
 
 
 @app.get("/health")
-async def health(api_verified: bool = Depends(verify_api_key)):
+async def health():
     return JSONResponse(content={"ok": True}, status_code=200)
 
 
@@ -273,7 +226,6 @@ async def health(api_verified: bool = Depends(verify_api_key)):
 async def print_image(
     request: Request,
     image: UploadFile = File(...),
-    api_verified: bool = Depends(verify_api_key),
     printer_name: str = Depends(require_printer),
     max_width: str = Query(MAX_WIDTH_DEFAULT),
     mode: str = Query("gsv0"),
@@ -368,7 +320,6 @@ async def print_image(
 @app.post("/print-text")
 async def print_text(
     request: Request,
-    api_verified: bool = Depends(verify_api_key),
     printer_name: str = Depends(require_printer),
     align: str = Query("left"),
     underline: str = Query("none"),
@@ -433,7 +384,6 @@ async def print_text(
 @app.get("/beep")
 async def beep(
     request: Request,
-    api_verified: bool = Depends(verify_api_key),
     printer_name: str = Depends(require_printer),
     count: int = Query(1),
     duration: Optional[int] = Query(None),
@@ -469,7 +419,6 @@ async def beep(
 
 @app.api_route("/cut", methods=["GET", "POST"])
 async def cut(
-    api_verified: bool = Depends(verify_api_key),
     printer_name: str = Depends(require_printer),
     mode: str = Query("partial"),
     feed: int = Query(3),
@@ -493,7 +442,6 @@ async def cut(
 
 @app.api_route("/drawer", methods=["GET", "POST"])
 async def drawer(
-    api_verified: bool = Depends(verify_api_key),
     printer_name: str = Depends(require_printer),
     pin: int = Query(0),
     t1: int = Query(100),
@@ -524,7 +472,6 @@ async def drawer(
 
 @app.api_route("/feed", methods=["GET", "POST"])
 async def feed(
-    api_verified: bool = Depends(verify_api_key),
     printer_name: str = Depends(require_printer),
     lines: int = Query(3),
 ):
@@ -552,7 +499,6 @@ async def feed(
 @app.post("/print-raw")
 async def print_raw(
     request: Request,
-    api_verified: bool = Depends(verify_api_key),
     printer_name: str = Depends(require_printer),
 ):
     b64 = await get_json_or_form(request, "base64")

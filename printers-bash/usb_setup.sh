@@ -218,16 +218,12 @@ else
     echo -e "${RED}WARNING: requirements.txt not found!${NC}"
 fi
 
-# Create .env file if it doesn't exist
+# Create .env file if it doesn't exist (optional - uses defaults if not present)
 if [ ! -f ".env" ] && [ -f ".env.example" ]; then
     echo ""
     echo -e "${YELLOW}Creating .env file...${NC}"
     cp .env.example .env
-    # Generate random API key
-    API_KEY=$(openssl rand -hex 32 2>/dev/null || cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 64 | head -n 1)
-    sed -i "s/your_secret_api_key_here/$API_KEY/" .env
-    echo -e "${GREEN}✓ .env file created with generated API key${NC}"
-    echo -e "${CYAN}  API Key: $API_KEY${NC}"
+    echo -e "${GREEN}✓ .env file created${NC}"
 fi
 
 # Step 8: Detect available printers

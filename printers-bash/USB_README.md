@@ -16,7 +16,7 @@ chmod +x usb_setup.sh
 sudo ./usb_setup.sh
 
 # 4. Wait 5-10 minutes ☕
-# 5. Done! Server auto-starts and displays IP & API key
+# 5. Done! Server auto-starts and displays IP & port
 ```
 
 **Before first use:** Edit `GITHUB_REPO` in `usb_setup.sh` (line 35) or create `.env.setup` file.
@@ -32,12 +32,12 @@ When you run the setup script, it will:
 4. ✅ **Clone repository** from GitHub
 5. ✅ **Create Python virtual environment** (with correct Python version)
 6. ✅ **Install all required packages**
-7. ✅ **Generate secure API key** automatically
+7. ✅ **Create configuration file** automatically
 8. ✅ **Detect network printers** automatically
 9. ✅ **Install systemd service** for auto-start on boot
 10. ✅ **Configure auto-updates** from GitHub on every restart
 11. ✅ **Start server immediately** via systemd
-12. ✅ **Display API key and access URLs**
+12. ✅ **Display access URLs**
 
 **100% Automatic - No user input required!**
 **Server auto-starts on every reboot!** 🔄
@@ -179,7 +179,7 @@ No authentication needed! Just set your `GITHUB_REPO` and you're good to go.
 
 ### **Server is Already Running!**
 The setup script automatically:
-- ✅ Generates a secure API key
+- ✅ Creates configuration file (optional)
 - ✅ Installs the systemd service
 - ✅ Enables auto-start on boot
 - ✅ Configures auto-updates from GitHub
@@ -219,14 +219,8 @@ sudo systemctl enable printer-server
 
 **Test Server API:**
 
-You'll need the API key that was displayed during setup. Check the `.env` file:
 ```bash
-cat ~/printer-server/.env
-```
-
-Then test with the API key:
-```bash
-curl -H "X-API-Key: YOUR_API_KEY_HERE" http://localhost:3006/health
+curl http://localhost:3006/health
 ```
 
 Should return: `{"ok":true}`
@@ -260,28 +254,21 @@ lpinfo -v
 
 ## 🧪 Test the Server:
 
-**First, get your API key:**
-```bash
-grep API_KEY ~/printer-server/.env
-```
-
 ### **Health Check:**
 ```bash
-curl -H "X-API-Key: YOUR_API_KEY" http://localhost:3006/health
+curl http://localhost:3006/health
 ```
 
 ### **Print Text:**
 ```bash
 curl -X POST "http://localhost:3006/print-text?printer=Kitchen_Printer&cut=true" \
-  -H "X-API-Key: YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"text":"Hello from USB setup!"}'
 ```
 
 ### **Beep:**
 ```bash
-curl -H "X-API-Key: YOUR_API_KEY" \
-  "http://localhost:3006/beep?printer=Kitchen_Printer&count=2"
+curl "http://localhost:3006/beep?printer=Kitchen_Printer&count=2"
 ```
 
 ---
@@ -344,11 +331,6 @@ The script needs sudo access to:
 sudo journalctl -u printer-server -f
 ```
 
-### **Check API key**
-```bash
-cat ~/printer-server/.env | grep API_KEY
-```
-
 ### **Python version errors (package installation fails)**
 If you see errors like "No matching distribution found for fastapi==0.115.0":
 
@@ -380,7 +362,7 @@ Once setup is complete:
 - ✅ **Auto-starts on boot** (systemd enabled)
 - ✅ **Auto-updates from GitHub** on every restart
 - ✅ **Python 3.11+** installed and configured
-- ✅ **API key generated** and displayed
+- ✅ **Configuration created** (optional .env file)
 - ✅ **IP address displayed** on screen
 - ✅ **CUPS configured** and ready
 - ✅ **All dependencies installed**
@@ -389,11 +371,9 @@ Your server will be running at:
 - **Local:** http://localhost:3006
 - **Network:** http://YOUR_IP:3006 (shown by script)
 
-**Important:** Save the API key displayed during setup! You'll need it for all API requests.
-
 **Reboot the Raspberry Pi - server will start automatically and pull latest updates!** 🔄
 
-Send print commands from any device on the same network using the API key!
+Send print commands from any device on the same network!
 
 ---
 
@@ -422,7 +402,7 @@ Send print commands from any device on the same network using the API key!
 3. **Files that should NOT be pushed** (already in `.gitignore`):
    - ❌ `venv/` - Virtual environment
    - ❌ `uploads/` - Temporary files
-   - ❌ `.env` - Contains secrets (API key)
+   - ❌ `.env` - Contains configuration (optional)
    - ❌ `printers-bash/.env.setup` - Contains GitHub token
 
 ### **Step 2: Prepare the USB Drive**
