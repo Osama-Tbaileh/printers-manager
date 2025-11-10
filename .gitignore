@@ -30,11 +30,11 @@ printers-bash/.env.setup
 
 # Uploads folder (temporary files)
 uploads/
-*.jpg
-*.jpeg
-*.png
-*.bmp
-*.gif
+# *.jpg
+# *.jpeg
+# *.png
+# *.bmp
+# *.gif
 
 # IDE
 .vscode/

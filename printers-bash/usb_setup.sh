@@ -35,6 +35,7 @@ fi
 GITHUB_REPO="${GITHUB_REPO:-iztech-team/printers-manager}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/printer-server}"
 SERVER_PORT="${SERVER_PORT:-3006}"
+LOGO_FILENAME="${LOGO_FILENAME:-BarakaOS_Logo.png}"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # AUTHENTICATION SETUP (for private repos)
@@ -438,7 +439,7 @@ y = 20
 padding = 20
 
 # Try to load company logo
-logo_path = "$INSTALL_DIR/logo.png"
+logo_path = "$INSTALL_DIR/$LOGO_FILENAME"
 if os.path.exists(logo_path):
     try:
         logo = Image.open(logo_path)
