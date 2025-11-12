@@ -560,40 +560,14 @@ y += 10
 draw.line([(padding, y), (width - padding, y)], fill='black', width=2)
 y += 25
 
-# Fun celebratory header
-celebration = "🎊 YAY! IT WORKS! 🎊"
-bbox = draw.textbbox((0, 0), celebration, font=header_font)
-cel_width = bbox[2] - bbox[0]
-draw.text(((width - cel_width) // 2, y), celebration, fill='green', font=header_font)
+# Success message
+success_message = "Your printer has been successfully set up and is ready to use!"
+bbox = draw.textbbox((0, 0), success_message, font=header_font)
+msg_width = bbox[2] - bbox[0]
+draw.text(((width - msg_width) // 2, y), success_message, fill='green', font=header_font)
 y += 40
 
-closing_messages = [
-    "✨ Congratulations! ✨",
-    "Your printer is now part of our",
-    "awesome printing family!",
-    "",
-    "🎉 Setup completed like a boss! 🎉",
-    "",
-    "If this printer misbehaves,",
-    "give it a gentle tap and remind it",
-    "that we believe in it! 😊",
-    "",
-    "Need help? We got your back!",
-    "Contact your friendly neighborhood",
-    "system administrator.",
-    "",
-    "Now go forth and print",
-    "amazing things! 🚀",
-    "",
-    "P.S. This printer thinks",
-    "you're pretty cool! 😎",
-    "",
-    "━━━━━━━━━━━━━━━━━━━━━━━━━",
-    "",
-    "Made with ❤️ and lots of ☕",
-    "Have an absolutely fantastic day!",
-    "You deserve it! 🌟✨🎈",
-]
+closing_messages = []
 
 for line in closing_messages:
     bbox = draw.textbbox((0, 0), line, font=small_font)
