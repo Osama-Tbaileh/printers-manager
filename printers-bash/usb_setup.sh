@@ -527,6 +527,8 @@ logo_path = "$INSTALL_DIR/$LOGO_FILENAME"
 if os.path.exists(logo_path):
     try:
         logo = Image.open(logo_path)
+        # Convert logo to grayscale for thermal printing
+        logo = logo.convert('L')  # Convert to grayscale
         # Resize logo to fit width (max 400px wide)
         logo_max_width = 400
         if logo.width > logo_max_width:
@@ -536,12 +538,6 @@ if os.path.exists(logo_path):
         
         # Center the logo
         logo_x = (width - logo.width) // 2
-        # Convert to RGB if needed (for PNG with transparency)
-        if logo.mode == 'RGBA':
-            # Create white background
-            logo_bg = Image.new('RGB', logo.size, 'white')
-            logo_bg.paste(logo, mask=logo.split()[3])
-            logo = logo_bg
         img.paste(logo, (logo_x, y))
         y += logo.height + 20
     except:
@@ -572,7 +568,7 @@ info_lines = [
 
 for label, value in info_lines:
     draw.text((padding, y), label, fill='black', font=normal_font)
-    draw.text((padding + 150, y), value, fill='blue', font=normal_font)
+    draw.text((padding + 150, y), value, fill='black', font=normal_font)
     y += 25
 
 y += 10
@@ -591,7 +587,7 @@ printer_lines = [
 
 for label, value in printer_lines:
     draw.text((padding, y), label, fill='black', font=normal_font)
-    draw.text((padding + 150, y), str(value), fill='green', font=normal_font)
+    draw.text((padding + 150, y), str(value), fill='black', font=normal_font)
     y += 25
 
 # Print assigned names (wrap if needed)
@@ -610,7 +606,7 @@ y += 20
 success_msg = "✓ Printer is working correctly!"
 bbox = draw.textbbox((0, 0), success_msg, font=header_font)
 msg_width = bbox[2] - bbox[0]
-draw.text(((width - msg_width) // 2, y), success_msg, fill='green', font=header_font)
+draw.text(((width - msg_width) // 2, y), success_msg, fill='black', font=header_font)
 y += 40
 
 # Instructions
@@ -636,7 +632,7 @@ y += 20
 timestamp = "$(date '+%Y-%m-%d %H:%M:%S')"
 bbox = draw.textbbox((0, 0), timestamp, font=small_font)
 ts_width = bbox[2] - bbox[0]
-draw.text(((width - ts_width) // 2, y), timestamp, fill='gray', font=small_font)
+draw.text(((width - ts_width) // 2, y), timestamp, fill='black', font=small_font)
 y += 30
 
 # Lovely closing message
@@ -648,7 +644,7 @@ y += 25
 success_message = "Your printer has been successfully set up and is ready to use!"
 bbox = draw.textbbox((0, 0), success_message, font=header_font)
 msg_width = bbox[2] - bbox[0]
-draw.text(((width - msg_width) // 2, y), success_message, fill='green', font=header_font)
+draw.text(((width - msg_width) // 2, y), success_message, fill='black', font=header_font)
 y += 40
 
 closing_messages = []
@@ -656,13 +652,8 @@ closing_messages = []
 for line in closing_messages:
     bbox = draw.textbbox((0, 0), line, font=small_font)
     line_width = bbox[2] - bbox[0]
-    # Add some color to special lines
-    color = 'black'
-    if '❤️' in line or '☕' in line or '🌟' in line:
-        color = 'purple'
-    elif 'awesome' in line or 'boss' in line or 'amazing' in line:
-        color = 'blue'
-    draw.text(((width - line_width) // 2, y), line, fill=color, font=small_font)
+    # All text in black and white only
+    draw.text(((width - line_width) // 2, y), line, fill='black', font=small_font)
     y += 22
 
 # Crop to actual content height
