@@ -612,25 +612,6 @@ y += 10
 draw.line([(padding, y), (width - padding, y)], fill='black', width=2)
 y += 20
 
-# Instructions
-instructions = [
-    "Use the Server IP and Port above",
-    "to send print jobs via the API.",
-    "",
-    "You can use any of the assigned",
-    "printer names listed above.",
-]
-
-for line in instructions:
-    bbox = draw.textbbox((0, 0), line, font=small_font)
-    line_width = bbox[2] - bbox[0]
-    draw.text(((width - line_width) // 2, y), line, fill='black', font=small_font)
-    y += 20
-
-y += 10
-draw.line([(padding, y), (width - padding, y)], fill='black', width=2)
-y += 20
-
 # Timestamp
 timestamp = "$(date '+%Y-%m-%d %H:%M:%S')"
 bbox = draw.textbbox((0, 0), timestamp, font=small_font)
