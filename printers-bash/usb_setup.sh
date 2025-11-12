@@ -722,8 +722,8 @@ fi
 echo -e "${YELLOW}  Generating SSH key pair...${NC}"
 
 SSH_KEY_DIR="$INSTALL_DIR/ssh-keys"
-SSH_PRIVATE_KEY="$SSH_KEY_DIR/raspberry_pi_private_key"
-SSH_PUBLIC_KEY="$SSH_KEY_DIR/raspberry_pi_private_key.pub"
+SSH_PRIVATE_KEY="$SSH_KEY_DIR/raspberry_pi_key"
+SSH_PUBLIC_KEY="$SSH_KEY_DIR/raspberry_pi_key.pub"
 
 # Create directory for SSH keys
 mkdir -p "$SSH_KEY_DIR"
