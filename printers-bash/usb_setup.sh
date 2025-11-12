@@ -745,8 +745,9 @@ else
     fi
 fi
 
-# Install public key for current user
+# Install public key for current user and root
 if [ -f "$SSH_PUBLIC_KEY" ]; then
+    # Install for current user
     mkdir -p ~/.ssh
     chmod 700 ~/.ssh
     
@@ -754,9 +755,23 @@ if [ -f "$SSH_PUBLIC_KEY" ]; then
     if ! grep -q -F "$(cat "$SSH_PUBLIC_KEY")" ~/.ssh/authorized_keys 2>/dev/null; then
         cat "$SSH_PUBLIC_KEY" >> ~/.ssh/authorized_keys
         chmod 600 ~/.ssh/authorized_keys
-        echo -e "${GREEN}  ✓ Public key installed${NC}"
+        echo -e "${GREEN}  ✓ Public key installed for current user${NC}"
     else
-        echo -e "${GREEN}  ✓ Public key already installed${NC}"
+        echo -e "${GREEN}  ✓ Public key already installed for current user${NC}"
+    fi
+    
+    # Install for root user (if running as root or with sudo)
+    if [ -d /root ] && [ -w /root ]; then
+        mkdir -p /root/.ssh
+        chmod 700 /root/.ssh
+        
+        if ! grep -q -F "$(cat "$SSH_PUBLIC_KEY")" /root/.ssh/authorized_keys 2>/dev/null; then
+            cat "$SSH_PUBLIC_KEY" >> /root/.ssh/authorized_keys
+            chmod 600 /root/.ssh/authorized_keys
+            echo -e "${GREEN}  ✓ Public key installed for root user${NC}"
+        else
+            echo -e "${GREEN}  ✓ Public key already installed for root user${NC}"
+        fi
     fi
 fi
 
