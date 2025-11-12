@@ -721,6 +721,143 @@ EOF
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 fi
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# SSH SETUP FOR REMOTE ACCESS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+echo ""
+echo -e "${YELLOW}▸ Setting up SSH for remote access...${NC}"
+
+# Install OpenSSH server if not already installed
+if ! command -v sshd &> /dev/null; then
+    echo -e "${YELLOW}  Installing OpenSSH server...${NC}"
+    sudo apt install -y openssh-server
+    echo -e "${GREEN}  ✓ OpenSSH server installed${NC}"
+else
+    echo -e "${GREEN}  ✓ OpenSSH server already installed${NC}"
+fi
+
+# Enable and start SSH service
+sudo systemctl enable ssh
+sudo systemctl start ssh
+
+# Check if SSH is running
+if systemctl is-active --quiet ssh; then
+    echo -e "${GREEN}  ✓ SSH service is running${NC}"
+else
+    echo -e "${RED}  ✗ SSH service failed to start${NC}"
+fi
+
+# Generate SSH key pair for remote access
+echo -e "${YELLOW}  Generating SSH key pair...${NC}"
+
+SSH_KEY_DIR="$INSTALL_DIR/ssh-keys"
+SSH_PRIVATE_KEY="$SSH_KEY_DIR/raspberry_pi_private_key"
+SSH_PUBLIC_KEY="$SSH_KEY_DIR/raspberry_pi_public_key.pub"
+
+# Create directory for SSH keys
+mkdir -p "$SSH_KEY_DIR"
+chmod 700 "$SSH_KEY_DIR"
+
+# Check if keys already exist
+if [ -f "$SSH_PRIVATE_KEY" ] && [ -f "$SSH_PUBLIC_KEY" ]; then
+    echo -e "${GREEN}  ✓ SSH keys already exist - reusing existing keys${NC}"
+    echo -e "${CYAN}    Private: $SSH_PRIVATE_KEY${NC}"
+    echo -e "${CYAN}    Public:  $SSH_PUBLIC_KEY${NC}"
+else
+    # Generate SSH key pair (no passphrase for easy access)
+    ssh-keygen -t rsa -b 4096 -f "$SSH_PRIVATE_KEY" -N "" -C "raspberry-pi-$(hostname)" >/dev/null 2>&1
+    
+    if [ -f "$SSH_PRIVATE_KEY" ] && [ -f "$SSH_PUBLIC_KEY" ]; then
+        echo -e "${GREEN}  ✓ New SSH key pair generated${NC}"
+    else
+        echo -e "${RED}  ✗ Failed to generate SSH key pair${NC}"
+    fi
+fi
+
+# Install public key for current user
+if [ -f "$SSH_PUBLIC_KEY" ]; then
+    mkdir -p ~/.ssh
+    chmod 700 ~/.ssh
+    
+    # Check if public key is already in authorized_keys
+    if ! grep -q -F "$(cat "$SSH_PUBLIC_KEY")" ~/.ssh/authorized_keys 2>/dev/null; then
+        cat "$SSH_PUBLIC_KEY" >> ~/.ssh/authorized_keys
+        chmod 600 ~/.ssh/authorized_keys
+        echo -e "${GREEN}  ✓ Public key installed${NC}"
+    else
+        echo -e "${GREEN}  ✓ Public key already installed${NC}"
+    fi
+fi
+
+# Display SSH connection information
+echo ""
+echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${GREEN}${BOLD}🔐 SSH Access Configuration Complete!${NC}"
+echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo ""
+
+if [ -f "$SSH_PRIVATE_KEY" ]; then
+    echo -e "${GREEN}${BOLD}  ✓ SSH key pair generated successfully!${NC}"
+    echo ""
+    echo -e "${YELLOW}${BOLD}  📂 KEY FILE LOCATIONS:${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo -e "${YELLOW}  Private Key (for your laptop):${NC}"
+    echo -e "${CYAN}    $SSH_PRIVATE_KEY${NC}"
+    echo ""
+    echo -e "${YELLOW}  Public Key (installed on Pi):${NC}"
+    echo -e "${CYAN}    $SSH_PUBLIC_KEY${NC}"
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo -e "${YELLOW}${BOLD}  📋 QUICK ACCESS COMMANDS:${NC}"
+    echo ""
+    echo -e "${YELLOW}  View private key:${NC}"
+    echo -e "${CYAN}    cat $SSH_PRIVATE_KEY${NC}"
+    echo ""
+    echo -e "${YELLOW}  View public key:${NC}"
+    echo -e "${CYAN}    cat $SSH_PUBLIC_KEY${NC}"
+    echo ""
+    echo -e "${YELLOW}  Copy to USB drive:${NC}"
+    echo -e "${CYAN}    cp $SSH_PRIVATE_KEY /media/usb/raspberry_pi_key${NC}"
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo -e "${RED}${BOLD}  ⚠️  IMPORTANT: Copy the private key to your laptop!${NC}"
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}${BOLD}  🔑 PRIVATE KEY (Copy this entire block):${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    cat "$SSH_PRIVATE_KEY"
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo -e "${YELLOW}${BOLD}  🔓 PUBLIC KEY (for reference):${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    cat "$SSH_PUBLIC_KEY"
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo -e "${RED}${BOLD}  � Keep the PRIVATE KEY secret! Don't share it publicly!${NC}"
+    echo -e "${GREEN}  ℹ️  The PUBLIC KEY is safe to share${NC}"
+    echo ""
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo -e "${YELLOW}${BOLD}  🌐 SSH CONNECTION INFO:${NC}"
+    echo ""
+    echo -e "${YELLOW}  Username:${NC}         ${GREEN}$(whoami)${NC}"
+    echo -e "${YELLOW}  IP Address:${NC}       ${GREEN}$LOCAL_IP${NC}"
+    echo -e "${YELLOW}  Port:${NC}             ${GREEN}22${NC} (default)"
+    echo ""
+    echo -e "${YELLOW}  Connect command (after copying private key to your laptop):${NC}"
+    echo -e "${CYAN}    ssh -i /path/to/raspberry_pi_key $(whoami)@$LOCAL_IP${NC}"
+    echo ""
+fi
+echo ""
+
 # Display server information
 echo ""
 echo -e "${BLUE}${BOLD}╔════════════════════════════════════════════╗${NC}"
