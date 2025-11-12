@@ -355,8 +355,92 @@ else
     exit 1
 fi
 
-# Test all configured printers
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# NETWORK PRINTER DISCOVERY
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 echo ""
+echo -e "${YELLOW}▸ Scanning for network printers...${NC}"
+echo -e "${CYAN}  This may take up to 30 seconds...${NC}"
+
+# Get local network subnet
+LOCAL_IP=$(hostname -I | awk '{print $1}')
+SUBNET=$(echo "$LOCAL_IP" | cut -d'.' -f1-3)
+
+# Scan common printer ports (9100, 515, 631) on local network
+echo -e "${CYAN}  Scanning subnet: ${SUBNET}.0/24${NC}"
+
+DISCOVERED_PRINTERS=()
+NEXT_PRINTER_NUM=1
+
+# Quick scan using nmap if available, otherwise use nc
+if command -v nmap &> /dev/null; then
+    echo -e "${CYAN}  Using nmap for fast scanning...${NC}"
+    # Scan for common printer ports
+    SCAN_RESULTS=$(sudo nmap -p 9100,515,631 --open "$SUBNET.0/24" 2>/dev/null | grep -B 4 "open" | grep "Nmap scan report" | awk '{print $NF}' | tr -d '()')
+else
+    echo -e "${CYAN}  Using basic network scan (installing nmap recommended for faster scans)...${NC}"
+    # Fallback: scan common IPs with netcat
+    SCAN_RESULTS=""
+    for i in {1..254}; do
+        IP="$SUBNET.$i"
+        # Quick check on port 9100 (most common for network printers)
+        if timeout 0.2 bash -c "echo > /dev/tcp/$IP/9100" 2>/dev/null; then
+            SCAN_RESULTS="$SCAN_RESULTS$IP\n"
+        fi
+    done
+fi
+
+# Get already configured printer URIs
+EXISTING_URIS=$(lpstat -v 2>/dev/null | grep -oP 'device for \S+: \K.*' | sort -u)
+
+# Process discovered printers
+if [ ! -z "$SCAN_RESULTS" ]; then
+    echo -e "${GREEN}✓ Found network printer(s)!${NC}"
+    
+    while IFS= read -r IP; do
+        [ -z "$IP" ] && continue
+        
+        # Check if this IP is already configured
+        IS_CONFIGURED=false
+        while IFS= read -r uri; do
+            if [[ "$uri" == *"$IP"* ]]; then
+                IS_CONFIGURED=true
+                break
+            fi
+        done <<< "$EXISTING_URIS"
+        
+        if [ "$IS_CONFIGURED" = false ]; then
+            echo -e "${YELLOW}  ▸ New printer found at $IP${NC}"
+            
+            # Auto-configure with test name
+            PRINTER_NAME="printer_$NEXT_PRINTER_NUM"
+            PRINTER_URI="socket://$IP:9100"
+            
+            echo -e "${CYAN}    Adding as: $PRINTER_NAME${NC}"
+            
+            # Add printer to CUPS
+            if sudo lpadmin -p "$PRINTER_NAME" -v "$PRINTER_URI" -E 2>/dev/null; then
+                echo -e "${GREEN}    ✓ Printer configured successfully${NC}"
+                DISCOVERED_PRINTERS+=("$PRINTER_NAME:$IP")
+                NEXT_PRINTER_NUM=$((NEXT_PRINTER_NUM + 1))
+            else
+                echo -e "${RED}    ✗ Failed to configure printer${NC}"
+            fi
+        else
+            echo -e "${CYAN}  ▸ Printer at $IP already configured${NC}"
+        fi
+    done <<< "$(echo -e "$SCAN_RESULTS")"
+else
+    echo -e "${YELLOW}⚠ No new network printers discovered${NC}"
+fi
+
+echo ""
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# TEST ALL CONFIGURED PRINTERS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 echo -e "${YELLOW}▸ Testing all configured printers...${NC}"
 CONFIGURED_PRINTERS=$(lpstat -p 2>/dev/null | awk '{print $2}')
 if [ -z "$CONFIGURED_PRINTERS" ]; then
