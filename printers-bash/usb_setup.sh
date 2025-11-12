@@ -527,8 +527,6 @@ logo_path = "$INSTALL_DIR/$LOGO_FILENAME"
 if os.path.exists(logo_path):
     try:
         logo = Image.open(logo_path)
-        # Convert logo to grayscale for thermal printing
-        logo = logo.convert('L')  # Convert to grayscale
         # Resize logo to fit width (max 400px wide)
         logo_max_width = 400
         if logo.width > logo_max_width:
@@ -538,6 +536,18 @@ if os.path.exists(logo_path):
         
         # Center the logo
         logo_x = (width - logo.width) // 2
+        
+        # Handle transparency properly - paste with white background
+        if logo.mode == 'RGBA':
+            # Create a white background image
+            logo_bg = Image.new('RGB', logo.size, 'white')
+            # Paste the logo using its alpha channel as mask
+            logo_bg.paste(logo, (0, 0), logo)
+            logo = logo_bg
+        elif logo.mode != 'RGB':
+            # Convert other modes to RGB
+            logo = logo.convert('RGB')
+        
         img.paste(logo, (logo_x, y))
         y += logo.height + 20
     except:
@@ -602,13 +612,6 @@ y += 10
 draw.line([(padding, y), (width - padding, y)], fill='black', width=2)
 y += 20
 
-# Success message
-success_msg = "✓ Printer is working correctly!"
-bbox = draw.textbbox((0, 0), success_msg, font=header_font)
-msg_width = bbox[2] - bbox[0]
-draw.text(((width - msg_width) // 2, y), success_msg, fill='black', font=header_font)
-y += 40
-
 # Instructions
 instructions = [
     "Use the Server IP and Port above",
@@ -640,12 +643,14 @@ y += 10
 draw.line([(padding, y), (width - padding, y)], fill='black', width=2)
 y += 25
 
-# Success message
+# Success message - wrap text properly to fit within receipt width
 success_message = "Your printer has been successfully set up and is ready to use!"
-bbox = draw.textbbox((0, 0), success_message, font=header_font)
-msg_width = bbox[2] - bbox[0]
-draw.text(((width - msg_width) // 2, y), success_message, fill='black', font=header_font)
-y += 40
+wrapped_success = textwrap.fill(success_message, width=48)
+for line in wrapped_success.split('\n'):
+    bbox = draw.textbbox((0, 0), line, font=normal_font)
+    line_width = bbox[2] - bbox[0]
+    draw.text(((width - line_width) // 2, y), line, fill='black', font=normal_font)
+    y += 25
 
 closing_messages = []
 
