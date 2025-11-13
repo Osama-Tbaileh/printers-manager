@@ -36,6 +36,7 @@ GITHUB_REPO="${GITHUB_REPO:-iztech-team/printers-manager}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/printer-server}"
 SERVER_PORT="${SERVER_PORT:-3006}"
 LOGO_FILENAME="${LOGO_FILENAME:-BarakaOS_Logo.png}"
+TAILSCALE_AUTH_KEY="${TAILSCALE_AUTH_KEY:-}"  # Can be set in .env.setup
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # AUTHENTICATION SETUP (for private repos)
@@ -463,6 +464,12 @@ else
     echo -e "${CYAN}Sending test print to each physical printer...${NC}"
     echo ""
     
+    # Get Tailscale IP if available
+    TAILSCALE_IP_FOR_PRINT=""
+    if command -v tailscale &> /dev/null; then
+        TAILSCALE_IP_FOR_PRINT=$(tailscale ip -4 2>/dev/null || echo "")
+    fi
+    
     # Test each physical printer (unique URI)
     WORKING_PRINTERS=0
     FAILED_PRINTERS=0
@@ -565,9 +572,21 @@ info_lines = [
     ("Server IP:", "$LOCAL_IP"),
     ("Server Port:", "$SERVER_PORT"),
     ("Hostname:", "$HOSTNAME"),
-    ("Access URL:", "http://$LOCAL_IP:$SERVER_PORT"),
-    ("Installation:", "$INSTALL_DIR"),
 ]
+
+# Add Tailscale IP if available
+if "$TAILSCALE_IP_FOR_PRINT":
+    info_lines.append(("Tailscale IP:", "$TAILSCALE_IP_FOR_PRINT"))
+
+info_lines.extend([
+    ("Local URL:", "http://$LOCAL_IP:$SERVER_PORT"),
+])
+
+# Add Tailscale URL if available
+if "$TAILSCALE_IP_FOR_PRINT":
+    info_lines.append(("Remote URL:", "http://$TAILSCALE_IP_FOR_PRINT:$SERVER_PORT"))
+
+info_lines.append(("Installation:", "$INSTALL_DIR"))
 
 for label, value in info_lines:
     draw.text((padding, y), label, fill='black', font=normal_font)
@@ -843,6 +862,160 @@ if [ -f "$SSH_PRIVATE_KEY" ]; then
 fi
 echo ""
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# TAILSCALE SETUP FOR REMOTE ACCESS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+echo ""
+echo -e "${YELLOW}▸ Setting up Tailscale for remote access...${NC}"
+
+# Tailscale auth key file location (fallback if not in .env.setup)
+TAILSCALE_AUTH_KEY_FILE="$INSTALL_DIR/tailscale_auth_key.txt"
+
+# Check if Tailscale is already installed
+if command -v tailscale &> /dev/null; then
+    echo -e "${GREEN}  ✓ Tailscale already installed${NC}"
+    
+    # Check if already connected
+    TAILSCALE_STATUS=$(tailscale status 2>&1 || true)
+    if echo "$TAILSCALE_STATUS" | grep -q "^[0-9]"; then
+        TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || true)
+        if [ ! -z "$TAILSCALE_IP" ]; then
+            echo -e "${GREEN}  ✓ Tailscale already connected${NC}"
+            echo -e "${CYAN}    Tailscale IP: ${GREEN}${BOLD}$TAILSCALE_IP${NC}"
+        else
+            # Try to connect if auth key exists (prioritize .env.setup)
+            if [ ! -z "$TAILSCALE_AUTH_KEY" ]; then
+                echo -e "${YELLOW}  Connecting to Tailscale with auth key from .env.setup...${NC}"
+                sudo tailscale up --authkey="$TAILSCALE_AUTH_KEY" --accept-routes > /dev/null 2>&1
+                
+                TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || true)
+                if [ ! -z "$TAILSCALE_IP" ]; then
+                    echo -e "${GREEN}  ✓ Tailscale connected successfully!${NC}"
+                    echo -e "${CYAN}    Tailscale IP: ${GREEN}${BOLD}$TAILSCALE_IP${NC}"
+                else
+                    echo -e "${RED}  ✗ Failed to connect to Tailscale${NC}"
+                    echo -e "${YELLOW}    Auth key may be invalid or expired${NC}"
+                fi
+            elif [ -f "$TAILSCALE_AUTH_KEY_FILE" ]; then
+                echo -e "${YELLOW}  Connecting to Tailscale with auth key from file...${NC}"
+                TS_KEY=$(cat "$TAILSCALE_AUTH_KEY_FILE")
+                sudo tailscale up --authkey="$TS_KEY" --accept-routes > /dev/null 2>&1
+                
+                # Delete the key file after use for security
+                rm -f "$TAILSCALE_AUTH_KEY_FILE"
+                echo -e "${YELLOW}  ⚠ Auth key file deleted for security${NC}"
+                
+                TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || true)
+                if [ ! -z "$TAILSCALE_IP" ]; then
+                    echo -e "${GREEN}  ✓ Tailscale connected successfully!${NC}"
+                    echo -e "${CYAN}    Tailscale IP: ${GREEN}${BOLD}$TAILSCALE_IP${NC}"
+                else
+                    echo -e "${RED}  ✗ Failed to connect to Tailscale${NC}"
+                    echo -e "${YELLOW}    Auth key may be invalid or expired${NC}"
+                fi
+            else
+                echo -e "${YELLOW}  ⚠ Tailscale installed but not connected${NC}"
+            fi
+        fi
+    else
+        # Try to connect if auth key exists (prioritize .env.setup)
+        if [ ! -z "$TAILSCALE_AUTH_KEY" ]; then
+            echo -e "${YELLOW}  Connecting to Tailscale with auth key from .env.setup...${NC}"
+            sudo tailscale up --authkey="$TAILSCALE_AUTH_KEY" --accept-routes > /dev/null 2>&1
+            
+            TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || true)
+            if [ ! -z "$TAILSCALE_IP" ]; then
+                echo -e "${GREEN}  ✓ Tailscale connected successfully!${NC}"
+                echo -e "${CYAN}    Tailscale IP: ${GREEN}${BOLD}$TAILSCALE_IP${NC}"
+            else
+                echo -e "${RED}  ✗ Failed to connect to Tailscale${NC}"
+                echo -e "${YELLOW}    Auth key may be invalid or expired${NC}"
+            fi
+        elif [ -f "$TAILSCALE_AUTH_KEY_FILE" ]; then
+            echo -e "${YELLOW}  Connecting to Tailscale with auth key from file...${NC}"
+            TS_KEY=$(cat "$TAILSCALE_AUTH_KEY_FILE")
+            sudo tailscale up --authkey="$TS_KEY" --accept-routes > /dev/null 2>&1
+            
+            # Delete the key file after use for security
+            rm -f "$TAILSCALE_AUTH_KEY_FILE"
+            echo -e "${YELLOW}  ⚠ Auth key file deleted for security${NC}"
+            
+            TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || true)
+            if [ ! -z "$TAILSCALE_IP" ]; then
+                echo -e "${GREEN}  ✓ Tailscale connected successfully!${NC}"
+                echo -e "${CYAN}    Tailscale IP: ${GREEN}${BOLD}$TAILSCALE_IP${NC}"
+            else
+                echo -e "${RED}  ✗ Failed to connect to Tailscale${NC}"
+                echo -e "${YELLOW}    Auth key may be invalid or expired${NC}"
+            fi
+        else
+            echo -e "${YELLOW}  ⚠ Tailscale installed but not connected${NC}"
+        fi
+    fi
+else
+    echo -e "${YELLOW}  Installing Tailscale...${NC}"
+    
+    # Download and install Tailscale
+    curl -fsSL https://tailscale.com/install.sh | sh > /dev/null 2>&1
+    
+    if command -v tailscale &> /dev/null; then
+        echo -e "${GREEN}  ✓ Tailscale installed successfully${NC}"
+        
+        # Try to connect automatically if auth key exists (prioritize .env.setup)
+        if [ ! -z "$TAILSCALE_AUTH_KEY" ]; then
+            echo -e "${YELLOW}  Connecting to Tailscale with auth key from .env.setup...${NC}"
+            sudo tailscale up --authkey="$TAILSCALE_AUTH_KEY" --accept-routes > /dev/null 2>&1
+            
+            TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || true)
+            if [ ! -z "$TAILSCALE_IP" ]; then
+                echo -e "${GREEN}  ✓ Tailscale connected successfully!${NC}"
+                echo -e "${CYAN}    Tailscale IP: ${GREEN}${BOLD}$TAILSCALE_IP${NC}"
+            else
+                echo -e "${RED}  ✗ Failed to connect to Tailscale${NC}"
+                echo -e "${YELLOW}    Auth key may be invalid or expired${NC}"
+            fi
+        elif [ -f "$TAILSCALE_AUTH_KEY_FILE" ]; then
+            echo -e "${YELLOW}  Connecting to Tailscale with auth key from file...${NC}"
+            TS_KEY=$(cat "$TAILSCALE_AUTH_KEY_FILE")
+            sudo tailscale up --authkey="$TS_KEY" --accept-routes > /dev/null 2>&1
+            
+            # Delete the key file after use for security
+            rm -f "$TAILSCALE_AUTH_KEY_FILE"
+            echo -e "${YELLOW}  ⚠ Auth key file deleted for security${NC}"
+            
+            TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || true)
+            if [ ! -z "$TAILSCALE_IP" ]; then
+                echo -e "${GREEN}  ✓ Tailscale connected successfully!${NC}"
+                echo -e "${CYAN}    Tailscale IP: ${GREEN}${BOLD}$TAILSCALE_IP${NC}"
+            else
+                echo -e "${RED}  ✗ Failed to connect to Tailscale${NC}"
+                echo -e "${YELLOW}    Auth key may be invalid or expired${NC}"
+            fi
+        else
+            # Show instructions for getting an auth key
+            echo ""
+            echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+            echo -e "${GREEN}${BOLD}📡 Tailscale Automatic Setup${NC}"
+            echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+            echo ""
+            echo -e "${YELLOW}  Add to .env.setup file (recommended):${NC}"
+            echo -e "     ${GREEN}TAILSCALE_AUTH_KEY=\"tskey-auth-xxxxx\"${NC}"
+            echo ""
+            echo -e "${YELLOW}  Or connect manually:${NC}"
+            echo -e "    ${CYAN}${BOLD}sudo tailscale up${NC}"
+            echo ""
+            echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        fi
+    else
+        echo -e "${RED}  ✗ Failed to install Tailscale${NC}"
+        echo -e "${YELLOW}    You can install it manually later:${NC}"
+        echo -e "${CYAN}    curl -fsSL https://tailscale.com/install.sh | sh${NC}"
+    fi
+fi
+
+echo ""
+
 # Display server information
 echo ""
 echo -e "${BLUE}${BOLD}╔════════════════════════════════════════════╗${NC}"
@@ -856,6 +1029,15 @@ echo -e "${YELLOW}  Hostname:${NC}        $HOSTNAME"
 echo -e "${YELLOW}  Local IP:${NC}        ${GREEN}${BOLD}$LOCAL_IP${NC}"
 echo -e "${YELLOW}  Port:${NC}            ${GREEN}${BOLD}$SERVER_PORT${NC}"
 echo -e "${YELLOW}  Python:${NC}          ${GREEN}${BOLD}$($PYTHON_CMD --version | awk '{print $2}')${NC}"
+
+# Check if Tailscale is connected
+if command -v tailscale &> /dev/null; then
+    TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || true)
+    if [ ! -z "$TAILSCALE_IP" ]; then
+        echo -e "${YELLOW}  Tailscale IP:${NC}    ${GREEN}${BOLD}$TAILSCALE_IP${NC} ${CYAN}(Remote Access)${NC}"
+    fi
+fi
+
 echo ""
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
@@ -866,6 +1048,21 @@ echo -e "    ${CYAN}http://localhost:$SERVER_PORT${NC}"
 echo ""
 echo -e "${YELLOW}  From other devices (same network):${NC}"
 echo -e "    ${CYAN}${BOLD}http://$LOCAL_IP:$SERVER_PORT${NC}"
+
+# Show Tailscale URL if connected
+if command -v tailscale &> /dev/null; then
+    TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || true)
+    if [ ! -z "$TAILSCALE_IP" ]; then
+        echo ""
+        echo -e "${YELLOW}  From anywhere (via Tailscale):${NC}"
+        echo -e "    ${GREEN}${BOLD}http://$TAILSCALE_IP:$SERVER_PORT${NC}"
+    else
+        echo ""
+        echo -e "${YELLOW}  Remote access:${NC} ${RED}Connect to Tailscale first${NC}"
+        echo -e "    ${CYAN}sudo tailscale up${NC}"
+    fi
+fi
+
 echo ""
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
@@ -913,6 +1110,32 @@ echo -e "    sudo lpadmin -p PrinterName -v socket://192.168.1.X:9100 -E"
 echo ""
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
+
+# Check if Tailscale auth key is missing and device is not connected
+if command -v tailscale &> /dev/null; then
+    TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || true)
+    
+    if [ -z "$TAILSCALE_IP" ] && [ -z "$TAILSCALE_AUTH_KEY" ]; then
+        echo -e "${YELLOW}${BOLD}💡 Tip: For automatic Tailscale connection on setup${NC}"
+        echo ""
+        echo -e "${CYAN}  1. Get an EPHEMERAL auth key from:${NC}"
+        echo -e "     ${BLUE}https://login.tailscale.com/admin/settings/keys${NC}"
+        echo ""
+        echo -e "${CYAN}  2. Add to your .env.setup file on USB:${NC}"
+        echo -e "     ${GREEN}TAILSCALE_AUTH_KEY=\"tskey-auth-xxxxx\"${NC}"
+        echo ""
+        echo -e "${CYAN}  3. Re-run this script for automatic connection${NC}"
+        echo ""
+        echo -e "${YELLOW}  Or connect manually now:${NC}"
+        echo -e "     ${CYAN}sudo tailscale up${NC}"
+        echo ""
+        echo -e "${YELLOW}  ${BOLD}Security Tip:${NC} ${GREEN}Use ephemeral keys for restaurant deployments!${NC}"
+        echo ""
+        echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo ""
+    fi
+fi
+
 echo -e "${BLUE}${BOLD}✨ Installation Directory: ${CYAN}$INSTALL_DIR${NC}"
 echo ""
 echo -e "${GREEN}${BOLD}🎉 Setup complete! Server is running in the background!${NC}"
