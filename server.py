@@ -280,33 +280,23 @@ async def print_image(
             stderr=subprocess.PIPE,
         )
 
-        # Build complete payload with proper ESC/POS sequencing
-        # The printer will execute commands in order and won't cut until done
         payload = bytearray()
         payload += esc_init()
         payload += conv.stdout
         
-        # Add feed lines to ensure image is fully out of print head area
-        # This is CRITICAL - the print head needs clearance before cutting
-        min_feed_lines = 5  # Minimum lines to ensure image is past cutter
-        total_feed = max(lines_after, min_feed_lines)
-        if total_feed:
-            payload += esc_feed(total_feed)
-        
-        # Now add beep and cut - these will execute AFTER all above completes
+        if lines_after:
+            payload += esc_feed(lines_after)
         if beep_after:
             payload += esc_beep(beep_count, beep_duration)
         if cut_after:
             payload += esc_cut(cut_mode, cut_feed)
 
-        # Send as single atomic operation - printer processes sequentially
         lp = send_raw(printer_name, bytes(payload))
 
         return JSONResponse(
             content={
-                "message": "Print image sent (raw mode)",
+                "message": "Print image sent",
                 "printer": printer_name,
-                "mode": "raw",
                 "lines_after": lines_after,
                 "beep": bool(beep_after),
                 "cut": bool(cut_after),
