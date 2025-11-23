@@ -3,6 +3,7 @@ import uuid
 import base64
 import binascii
 import subprocess
+import time
 from typing import Optional
 
 from fastapi import (
@@ -98,6 +99,26 @@ def send_raw(printer: str, data: bytes):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
+
+
+def send_image_file(printer: str, filepath: str):
+    """Send image file through CUPS processing (uses PPD settings)"""
+    return subprocess.run(
+        ["lp", "-d", printer, filepath],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+
+def printer_has_ppd(printer: str) -> bool:
+    """Check if printer has a PPD file (supports hardware options)"""
+    result = subprocess.run(
+        ["lpoptions", "-p", printer, "-l"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    return result.returncode == 0 and b"Unable to get PPD" not in result.stderr
 
 
 def clamp(val: int, lo: int, hi: int) -> int:
@@ -252,6 +273,26 @@ async def print_image(
     no_dither = get_bool_arg(request, "no_dither", False)
 
     try:
+        # Check if printer has PPD support for hardware-level control
+        has_ppd = printer_has_ppd(printer_name)
+        
+        if has_ppd:
+            # Printer has PPD - send image file directly, let CUPS handle everything
+            # PPD settings like FeedCutAfterJobEnd will control cutting timing
+            lp = send_image_file(printer_name, filepath)
+            
+            return JSONResponse(
+                content={
+                    "message": "Print image sent (PPD mode)",
+                    "printer": printer_name,
+                    "mode": "ppd",
+                    "note": "Cutting controlled by printer PPD settings (FeedCutAfterJobEnd)",
+                    "lp_stdout": lp.stdout.decode("utf-8", "ignore"),
+                },
+                status_code=200,
+            )
+        
+        # No PPD - use raw ESC/POS mode
         if not os.path.exists(PRINT_SCRIPT):
             return json_error(f"Missing {PRINT_SCRIPT}", 500)
 
@@ -278,22 +319,33 @@ async def print_image(
             stderr=subprocess.PIPE,
         )
 
+        # Build complete payload with proper ESC/POS sequencing
+        # The printer will execute commands in order and won't cut until done
         payload = bytearray()
         payload += esc_init()
         payload += conv.stdout
-        if lines_after:
-            payload += esc_feed(lines_after)
+        
+        # Add feed lines to ensure image is fully out of print head area
+        # This is CRITICAL - the print head needs clearance before cutting
+        min_feed_lines = 5  # Minimum lines to ensure image is past cutter
+        total_feed = max(lines_after, min_feed_lines)
+        if total_feed:
+            payload += esc_feed(total_feed)
+        
+        # Now add beep and cut - these will execute AFTER all above completes
         if beep_after:
             payload += esc_beep(beep_count, beep_duration)
         if cut_after:
             payload += esc_cut(cut_mode, cut_feed)
 
+        # Send as single atomic operation - printer processes sequentially
         lp = send_raw(printer_name, bytes(payload))
 
         return JSONResponse(
             content={
-                "message": "Print image sent",
+                "message": "Print image sent (raw mode)",
                 "printer": printer_name,
+                "mode": "raw",
                 "lines_after": lines_after,
                 "beep": bool(beep_after),
                 "cut": bool(cut_after),
