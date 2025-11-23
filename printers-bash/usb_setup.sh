@@ -91,17 +91,6 @@ echo -e "${GREEN}✓ CUPS service started${NC}"
 sudo usermod -a -G lpadmin $USER
 echo -e "${GREEN}✓ User added to lpadmin group${NC}"
 
-# Install POS-80 PPD file for thermal printers
-if [ -f "$INSTALL_DIR/printers-bash/POS-80.ppd" ]; then
-    echo -e "${CYAN}Installing POS-80.ppd file...${NC}"
-    sudo mkdir -p /usr/share/cups/model
-    sudo cp "$INSTALL_DIR/printers-bash/POS-80.ppd" /usr/share/cups/model/
-    sudo chmod 644 /usr/share/cups/model/POS-80.ppd
-    echo -e "${GREEN}✓ PPD file installed${NC}"
-else
-    echo -e "${YELLOW}⚠ POS-80.ppd not found, printers will use generic driver${NC}"
-fi
-
 # Step 3: Check for available dependencies
 echo ""
 echo -e "${YELLOW}[3/8] Verifying installation...${NC}"
@@ -253,6 +242,19 @@ if [ ! -z "$PORT_PID" ]; then
     echo -e "${GREEN}✓ Port $SERVER_PORT is now free${NC}"
 else
     echo -e "${GREEN}✓ Port $SERVER_PORT is available${NC}"
+fi
+
+# Install POS-80 PPD file for thermal printers (after repo clone)
+echo ""
+echo -e "${YELLOW}▸ Installing POS-80 PPD file for thermal printers...${NC}"
+if [ -f "$INSTALL_DIR/printers-bash/POS-80.ppd" ]; then
+    sudo mkdir -p /usr/share/cups/model
+    sudo cp "$INSTALL_DIR/printers-bash/POS-80.ppd" /usr/share/cups/model/
+    sudo chmod 644 /usr/share/cups/model/POS-80.ppd
+    echo -e "${GREEN}✓ PPD file installed to /usr/share/cups/model/${NC}"
+else
+    echo -e "${YELLOW}⚠ POS-80.ppd not found at $INSTALL_DIR/printers-bash/POS-80.ppd${NC}"
+    echo -e "${YELLOW}⚠ Printers will be configured without PPD (raw mode)${NC}"
 fi
 
 # Step 8: Detect available printers
