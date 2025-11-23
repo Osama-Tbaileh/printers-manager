@@ -101,26 +101,6 @@ def send_raw(printer: str, data: bytes):
     )
 
 
-def send_image_file(printer: str, filepath: str):
-    """Send image file through CUPS processing (uses PPD settings)"""
-    return subprocess.run(
-        ["lp", "-d", printer, filepath],
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-
-
-def printer_has_ppd(printer: str) -> bool:
-    """Check if printer has a PPD file (supports hardware options)"""
-    result = subprocess.run(
-        ["lpoptions", "-p", printer, "-l"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    return result.returncode == 0 and b"Unable to get PPD" not in result.stderr
-
-
 def clamp(val: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, val))
 
@@ -273,26 +253,7 @@ async def print_image(
     no_dither = get_bool_arg(request, "no_dither", False)
 
     try:
-        # Check if printer has PPD support for hardware-level control
-        has_ppd = printer_has_ppd(printer_name)
-        
-        if has_ppd:
-            # Printer has PPD - send image file directly, let CUPS handle everything
-            # PPD settings like FeedCutAfterJobEnd will control cutting timing
-            lp = send_image_file(printer_name, filepath)
-            
-            return JSONResponse(
-                content={
-                    "message": "Print image sent (PPD mode)",
-                    "printer": printer_name,
-                    "mode": "ppd",
-                    "note": "Cutting controlled by printer PPD settings (FeedCutAfterJobEnd)",
-                    "lp_stdout": lp.stdout.decode("utf-8", "ignore"),
-                },
-                status_code=200,
-            )
-        
-        # No PPD - use raw ESC/POS mode
+        # Raw ESC/POS mode with manual control
         if not os.path.exists(PRINT_SCRIPT):
             return json_error(f"Missing {PRINT_SCRIPT}", 500)
 

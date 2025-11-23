@@ -244,18 +244,7 @@ else
     echo -e "${GREEN}✓ Port $SERVER_PORT is available${NC}"
 fi
 
-# Install POS-80 PPD file for thermal printers (after repo clone)
-echo ""
-echo -e "${YELLOW}▸ Installing POS-80 PPD file for thermal printers...${NC}"
-if [ -f "$INSTALL_DIR/printers-bash/POS-80.ppd" ]; then
-    sudo mkdir -p /usr/share/cups/model
-    sudo cp "$INSTALL_DIR/printers-bash/POS-80.ppd" /usr/share/cups/model/
-    sudo chmod 644 /usr/share/cups/model/POS-80.ppd
-    echo -e "${GREEN}✓ PPD file installed to /usr/share/cups/model/${NC}"
-else
-    echo -e "${YELLOW}⚠ POS-80.ppd not found at $INSTALL_DIR/printers-bash/POS-80.ppd${NC}"
-    echo -e "${YELLOW}⚠ Printers will be configured without PPD (raw mode)${NC}"
-fi
+
 
 # Step 8: Detect available printers
 echo ""
@@ -426,30 +415,13 @@ if [ ! -z "$SCAN_RESULTS" ]; then
             
             echo -e "${CYAN}    Adding as: $PRINTER_NAME${NC}"
             
-            # Add printer to CUPS with POS-80 PPD and optimal cut settings
-            PPD_FILE="/usr/share/cups/model/POS-80.ppd"
-            if [ -f "$PPD_FILE" ]; then
-                # Use PPD with settings: 2 line feed after job, full cut on document completion
-                if sudo lpadmin -p "$PRINTER_NAME" -v "$PRINTER_URI" -P "$PPD_FILE" \
-                    -o FeedCutAfterJobEnd=2Line \
-                    -o DocCutType=2FullCutDoc \
-                    -o PageCutType=0NoCutPage \
-                    -E 2>/dev/null; then
-                    echo -e "${GREEN}    ✓ Printer configured with POS-80 driver (2-line feed before cut)${NC}"
-                    DISCOVERED_PRINTERS+=("$PRINTER_NAME:$IP")
-                    NEXT_PRINTER_NUM=$((NEXT_PRINTER_NUM + 1))
-                else
-                    echo -e "${RED}    ✗ Failed to configure printer with PPD${NC}"
-                fi
+            # Add printer to CUPS (raw mode)
+            if sudo lpadmin -p "$PRINTER_NAME" -v "$PRINTER_URI" -E 2>/dev/null; then
+                echo -e "${GREEN}    ✓ Printer configured (raw mode)${NC}"
+                DISCOVERED_PRINTERS+=("$PRINTER_NAME:$IP")
+                NEXT_PRINTER_NUM=$((NEXT_PRINTER_NUM + 1))
             else
-                # Fallback to generic driver if PPD not found
-                if sudo lpadmin -p "$PRINTER_NAME" -v "$PRINTER_URI" -E 2>/dev/null; then
-                    echo -e "${GREEN}    ✓ Printer configured (generic driver)${NC}"
-                    DISCOVERED_PRINTERS+=("$PRINTER_NAME:$IP")
-                    NEXT_PRINTER_NUM=$((NEXT_PRINTER_NUM + 1))
-                else
-                    echo -e "${RED}    ✗ Failed to configure printer${NC}"
-                fi
+                echo -e "${RED}    ✗ Failed to configure printer${NC}"
             fi
         else
             echo -e "${CYAN}  ▸ Printer at $IP already configured${NC}"
