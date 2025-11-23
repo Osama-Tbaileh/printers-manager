@@ -92,10 +92,10 @@ sudo usermod -a -G lpadmin $USER
 echo -e "${GREEN}✓ User added to lpadmin group${NC}"
 
 # Install POS-80 PPD file for thermal printers
-if [ -f "$REPO_DIR/printers-bash/POS-80.ppd" ]; then
+if [ -f "$INSTALL_DIR/printers-bash/POS-80.ppd" ]; then
     echo -e "${CYAN}Installing POS-80.ppd file...${NC}"
     sudo mkdir -p /usr/share/cups/model
-    sudo cp "$REPO_DIR/printers-bash/POS-80.ppd" /usr/share/cups/model/
+    sudo cp "$INSTALL_DIR/printers-bash/POS-80.ppd" /usr/share/cups/model/
     sudo chmod 644 /usr/share/cups/model/POS-80.ppd
     echo -e "${GREEN}✓ PPD file installed${NC}"
 else
@@ -478,6 +478,13 @@ else
     
     while IFS= read -r printer; do
         PRINTER_URI=$(lpstat -v "$printer" 2>/dev/null | grep -oP 'device for \S+: \K.*' || echo "unknown")
+        
+        # Skip invalid URIs (filter paths, etc.) - only process valid printer URIs
+        if [[ ! "$PRINTER_URI" =~ ^(socket|usb|ipp|http|lpd|smb):// ]] && [[ "$PRINTER_URI" != "unknown" ]]; then
+            echo -e "${YELLOW}  ⚠ Skipping invalid printer URI: $PRINTER_URI (printer: $printer)${NC}"
+            continue
+        fi
+        
         # Store printer names grouped by URI
         if [ -n "${PRINTER_GROUPS[$PRINTER_URI]}" ]; then
             PRINTER_GROUPS[$PRINTER_URI]="${PRINTER_GROUPS[$PRINTER_URI]}, $printer"
