@@ -191,7 +191,10 @@ async def print_image(
     p: Optional[str] = Query(None),
     printer_name: Optional[str] = Query(None),
     max_width: int = Query(MAX_WIDTH_DEFAULT),
-    lines_after: int = Query(0),
+    lines_after: int = Query(2),
+    beep: bool = Query(False),
+    beep_count: int = Query(3),
+    beep_duration: int = Query(2),
     cut: bool = Query(True),
     center: bool = Query(True),
     high_density: bool = Query(True),
@@ -259,6 +262,13 @@ async def print_image(
         if lines_after > 0:
             escpos.text('\n' * lines_after)
         
+        # Beep if requested (before cut)
+        if beep:
+            count_val = clamp(beep_count, 1, 9)
+            duration_val = clamp(beep_duration, 1, 9)
+            beep_cmd = b'\x1b\x42' + bytes([count_val, duration_val])
+            escpos._raw(beep_cmd)
+        
         # Cut paper - python-escpos handles proper timing/buffering automatically
         if cut:
             escpos.cut()
@@ -276,6 +286,7 @@ async def print_image(
                 "image_width": img.width,
                 "image_height": img.height,
                 "lines_after": lines_after,
+                "beep": beep,
                 "cut": cut,
             },
             status_code=200,
