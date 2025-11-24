@@ -3,9 +3,7 @@ import uuid
 import base64
 import binascii
 import subprocess
-import tempfile
 from typing import Optional
-from io import BytesIO
 
 from fastapi import (
     FastAPI,
@@ -22,9 +20,8 @@ from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 from PIL import Image
 
-# Import python-escpos library
+# Import python-escpos library WITH CUPS BACKEND
 try:
-    from escpos import printer
     from escpos.printer import CupsPrinter
     from escpos.exceptions import Error as EscposError
 except ImportError:
@@ -264,8 +261,9 @@ async def print_image(
     cut_feed: int = Query(0),
 ):
     """
-    Print image using python-escpos library.
+    Print image using python-escpos library WITH CUPS BACKEND.
     This properly handles image buffering and prevents cutting mid-image.
+    CUPS manages the print queue automatically.
     """
     if not image.filename or not is_allowed_file(image.filename):
         return json_error("Invalid or no selected file", 400)
@@ -286,7 +284,7 @@ async def print_image(
     no_dither = get_bool_arg(request, "no_dither", False)
 
     try:
-        # Get CUPS printer instance
+        # Get CUPS printer instance - this USES CUPS for queue management
         p = get_cups_printer(printer_name)
         
         # Open and process image
@@ -358,11 +356,12 @@ async def print_image(
                 p.cut(mode='PART')
         
         # Close printer connection to flush all commands
+        # CUPS will handle the actual queue and connection to the printer
         p.close()
 
         return JSONResponse(
             content={
-                "message": "Print image sent successfully using escpos",
+                "message": "Print image sent successfully using escpos with CUPS",
                 "printer": printer_name,
                 "image_width": img.width,
                 "image_height": img.height,
@@ -402,7 +401,7 @@ async def print_text(
     codepage: Optional[str] = Query(None),
 ):
     """
-    Print text using python-escpos library for better control.
+    Print text using python-escpos library WITH CUPS BACKEND.
     """
     text = await get_json_or_form(request, "text")
     if not text:
@@ -454,7 +453,7 @@ async def print_text(
 
         return JSONResponse(
             content={
-                "message": "Text sent successfully using escpos",
+                "message": "Text sent successfully using escpos with CUPS",
                 "printer": printer_name,
                 "method": "python-escpos with CUPS backend",
             },
@@ -477,7 +476,7 @@ async def beep(
     duration: Optional[int] = Query(None),
     time: Optional[int] = Query(None),
 ):
-    """Send beep command to printer"""
+    """Send beep command to printer via CUPS"""
     try:
         # Handle the 'time' parameter fallback
         if time is not None and duration is None:
@@ -509,7 +508,7 @@ async def cut(
     mode: str = Query("partial"),
     feed: int = Query(3),
 ):
-    """Send cut command to printer"""
+    """Send cut command to printer via CUPS"""
     try:
         p = get_cups_printer(printer_name)
         
@@ -540,7 +539,7 @@ async def drawer(
     t1: int = Query(100),
     t2: int = Query(100),
 ):
-    """Open cash drawer"""
+    """Open cash drawer via CUPS"""
     try:
         p = get_cups_printer(printer_name)
         
@@ -569,7 +568,7 @@ async def feed(
     printer_name: str = Depends(require_printer),
     lines: int = Query(3),
 ):
-    """Feed paper lines"""
+    """Feed paper lines via CUPS"""
     try:
         p = get_cups_printer(printer_name)
         p.ln(clamp(lines, 0, 255))
@@ -593,7 +592,7 @@ async def print_raw(
     printer_name: str = Depends(require_printer),
 ):
     """
-    Send raw ESC/POS data to printer.
+    Send raw ESC/POS data to printer via CUPS.
     Accepts base64 or hex encoded data.
     """
     b64 = await get_json_or_form(request, "base64")
@@ -716,8 +715,13 @@ async def printer_status(
 
 if __name__ == "__main__":
     import uvicorn
-    print(f"Starting printer server with python-escpos integration...")
-    print(f"CUPS backend will be used for printer queue management")
-    print(f"Server will listen on {SERVER_HOST}:{SERVER_PORT}")
+    print(f"🖨️  Starting printer server with python-escpos + CUPS integration")
+    print(f"📋 CUPS handles all printer queues and connections")
+    print(f"🚀 Server listening on {SERVER_HOST}:{SERVER_PORT}")
+    print(f"")
+    print(f"Key features:")
+    print(f"  ✅ CUPS queue management (handles multiple jobs)")
+    print(f"  ✅ python-escpos (fixes image cutting issue)")
+    print(f"  ✅ All endpoints from old_server preserved")
+    print(f"  ✅ Supports ?printer=X or ?p=X")
     uvicorn.run(app, host=SERVER_HOST, port=SERVER_PORT)
-
