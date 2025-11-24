@@ -433,6 +433,9 @@ async def cut(
     p: Optional[str] = Query(None),
     printer_name: Optional[str] = Query(None),
     feed: int = Query(3),
+    beep: bool = Query(True),
+    beep_count: int = Query(1),
+    beep_duration: int = Query(2),
     mode: str = Query("partial"),
 ):
     """Cut paper"""
@@ -450,6 +453,13 @@ async def cut(
         if feed > 0:
             escpos.text('\n' * feed)
         
+        # Beep if requested (before cut)
+        if beep:
+            count_val = clamp(beep_count, 1, 9)
+            duration_val = clamp(beep_duration, 1, 9)
+            beep_cmd = b'\x1b\x42' + bytes([count_val, duration_val])
+            escpos._raw(beep_cmd)
+        
         # Cut
         escpos.cut()
         
@@ -457,7 +467,13 @@ async def cut(
         send_to_cups(pname, escpos.output)
         
         return JSONResponse(
-            content={"message": "Paper cut", "printer": pname},
+            content={
+                "message": "Paper cut",
+                "printer": pname,
+                "feed": feed,
+                "beep": beep,
+                "mode": mode
+            },
             status_code=200,
         )
     except EscposError as e:
