@@ -255,13 +255,11 @@ async def print_image(
         if center:
             escpos.set(align='left')
         
-        # Important: Feed paper to ensure image is fully out before cutting
+        # Feed lines after image if requested
         if lines_after > 0:
             escpos.text('\n' * lines_after)
-        else:
-            escpos.text('\n\n')  # At least 2 lines for safety
         
-        # Cut paper
+        # Cut paper - python-escpos handles proper timing/buffering automatically
         if cut:
             escpos.cut()
         
