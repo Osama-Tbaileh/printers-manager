@@ -2,6 +2,7 @@ import os
 import uuid
 import base64
 import binascii
+import subprocess
 from typing import Optional
 
 from fastapi import (
@@ -18,8 +19,8 @@ from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 from PIL import Image
 
-# Import python-escpos library with NETWORK backend (direct IP connection)
-from escpos.printer import Network
+# Import python-escpos library with DUMMY printer (generates bytes, doesn't send)
+from escpos.printer import Dummy
 from escpos.exceptions import Error as EscposError
 
 # Load environment variables
@@ -33,11 +34,9 @@ MAX_CONTENT_LENGTH = int(os.getenv("MAX_UPLOAD_SIZE_MB", "20")) * 1024 * 1024
 SERVER_HOST = os.getenv("SERVER_HOST", "0.0.0.0")
 SERVER_PORT = int(os.getenv("SERVER_PORT", "3006"))
 
-# Printer configurations - DIRECT IP addresses (no CUPS bullshit)
-PRINTERS = {
-    "printer_1": {"host": os.getenv("PRINTER_1_IP", "192.168.1.87"), "port": 9100},
-    "printer_2": {"host": os.getenv("PRINTER_2_IP", "192.168.1.105"), "port": 9100},
-}
+# Printer names - these MUST match CUPS printer names
+# python-escpos generates commands, CUPS sends them (best of both worlds!)
+PRINTERS = ["printer_1", "printer_2"]
 
 app = FastAPI()
 
@@ -66,24 +65,47 @@ def is_allowed_file(filename: str) -> bool:
     )
 
 
-def get_printer_config(printer_name: str):
-    """Get printer name, supporting aliases like 'p' and 'printer'"""
+def validate_printer(printer_name: str) -> str:
+    """Validate printer name and return it"""
     if not printer_name:
         raise HTTPException(status_code=400, detail={"error": "Missing printer parameter"})
     
     if printer_name not in PRINTERS:
-        raise HTTPException(status_code=400, detail={"error": f"Unknown printer: {printer_name}. Available: {list(PRINTERS.keys())}"})
+        raise HTTPException(status_code=400, detail={"error": f"Unknown printer: {printer_name}. Available: {PRINTERS}"})
     
-    return PRINTERS[printer_name]
+    return printer_name
 
 
-def get_printer(printer_name: str) -> Network:
-    """Get a fresh Network printer connection"""
-    config = get_printer_config(printer_name)
+def verify_cups_printer(printer_name: str):
+    """Verify printer exists in CUPS (optional check)"""
     try:
-        return Network(config["host"], port=config["port"])
-    except Exception as e:
-        raise HTTPException(status_code=500, detail={"error": f"Cannot connect to {printer_name} at {config['host']}:{config['port']}: {str(e)}"})
+        subprocess.run(
+            ["lpstat", "-p", printer_name],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except subprocess.CalledProcessError:
+        # Printer not in CUPS - that's okay, we'll add it
+        pass
+
+
+def send_to_cups(printer_name: str, data: bytes):
+    """Send raw ESC/POS data to CUPS printer queue"""
+    try:
+        result = subprocess.run(
+            ["lp", "-d", printer_name, "-o", "raw"],
+            input=data,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        return result
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": f"CUPS printing failed: {e.stderr.decode('utf-8', 'ignore')}"}
+        )
 
 
 def clamp(val: int, lo: int, hi: int) -> int:
@@ -118,25 +140,47 @@ async def health():
     return JSONResponse(content={
         "ok": True,
         "status": "running",
-        "printers": list(PRINTERS.keys()),
-        "backend": "python-escpos with Network (direct IP)"
+        "printers": PRINTERS,
+        "backend": "python-escpos (Dummy) + CUPS",
+        "method": "escpos generates commands, CUPS sends them"
     }, status_code=200)
 
 
 @app.get("/list-printers")
 async def list_printers():
-    """List all configured printers"""
-    printer_list = []
-    for name, config in PRINTERS.items():
-        printer_list.append({
-            "name": name,
-            "host": config["host"],
-            "port": config["port"]
-        })
-    return JSONResponse(content={
-        "printers": printer_list,
-        "count": len(printer_list)
-    }, status_code=200)
+    """List all configured printers from CUPS"""
+    try:
+        result = subprocess.run(
+            ["lpstat", "-p"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        
+        # Parse lpstat output
+        printer_list = []
+        for line in result.stdout.strip().split('\n'):
+            if line.startswith('printer '):
+                parts = line.split()
+                if len(parts) >= 2:
+                    printer_list.append({
+                        "name": parts[1],
+                        "status": " ".join(parts[3:]) if len(parts) > 3 else "unknown"
+                    })
+        
+        return JSONResponse(content={
+            "printers": printer_list,
+            "count": len(printer_list),
+            "configured": PRINTERS
+        }, status_code=200)
+    except:
+        return JSONResponse(content={
+            "printers": [],
+            "count": 0,
+            "configured": PRINTERS,
+            "note": "Run lpstat -p to see CUPS printers"
+        }, status_code=200)
 
 
 @app.post("/print-image")
@@ -175,8 +219,11 @@ async def print_image(
         f.write(content)
 
     try:
-        # Get printer connection
-        printer_obj = get_printer(pname)
+        # Validate printer
+        validate_printer(pname)
+        
+        # Use Dummy printer to generate ESC/POS commands (doesn't send anything)
+        escpos = Dummy()
         
         # Open and process image
         img = Image.open(filepath)
@@ -193,11 +240,11 @@ async def print_image(
         
         # Set alignment
         if center:
-            printer_obj.set(align='center')
+            escpos.set(align='center')
         
-        # Print the image using escpos library
-        # This handles proper buffering and ensures the image is fully sent
-        printer_obj.image(
+        # Generate image ESC/POS commands
+        # python-escpos handles proper buffering and image conversion
+        escpos.image(
             img,
             impl='bitImageRaster',  # Most reliable method
             high_density_vertical=high_density,
@@ -206,20 +253,23 @@ async def print_image(
         
         # Reset alignment
         if center:
-            printer_obj.set(align='left')
+            escpos.set(align='left')
         
         # Important: Feed paper to ensure image is fully out before cutting
         if lines_after > 0:
-            printer_obj.text('\n' * lines_after)
+            escpos.text('\n' * lines_after)
         else:
-            printer_obj.text('\n\n')  # At least 2 lines for safety
+            escpos.text('\n\n')  # At least 2 lines for safety
         
         # Cut paper
         if cut:
-            printer_obj.cut()
+            escpos.cut()
         
-        # Close connection (flushes all data)
-        printer_obj.close()
+        # Get the generated ESC/POS bytes
+        escpos_bytes = escpos.output
+        
+        # Send through CUPS (queue management!)
+        send_to_cups(pname, escpos_bytes)
 
         return JSONResponse(
             content={
@@ -280,10 +330,13 @@ async def print_text(
         return json_error("Missing 'text' in body", 400)
 
     try:
-        printer_obj = get_printer(pname)
+        validate_printer(pname)
+        
+        # Use Dummy printer to generate ESC/POS commands
+        escpos = Dummy()
         
         # Set text formatting
-        printer_obj.set(
+        escpos.set(
             align=align,
             bold=bold,
             underline=underline,
@@ -292,22 +345,23 @@ async def print_text(
         )
         
         # Print text
-        printer_obj.text(text)
+        escpos.text(text)
         if not text.endswith('\n'):
-            printer_obj.text('\n')
+            escpos.text('\n')
         
         # Reset formatting
-        printer_obj.set()
+        escpos.set()
         
         # Feed lines
         if lines_after > 0:
-            printer_obj.text('\n' * lines_after)
+            escpos.text('\n' * lines_after)
         
         # Cut if requested
         if cut:
-            printer_obj.cut()
+            escpos.cut()
         
-        printer_obj.close()
+        # Send through CUPS
+        send_to_cups(pname, escpos.output)
 
         return JSONResponse(
             content={
@@ -337,15 +391,17 @@ async def beep(
         pname = "printer_1"
     
     try:
-        printer_obj = get_printer(pname)
+        validate_printer(pname)
         
         # ESC B n t - Buzzer command
         count_val = clamp(count, 1, 9)
         duration_val = clamp(duration, 1, 9)
         
-        # Send beep command
-        printer_obj._raw(b'\x1b\x42' + bytes([count_val, duration_val]))
-        printer_obj.close()
+        # Generate beep command
+        beep_bytes = b'\x1b\x42' + bytes([count_val, duration_val])
+        
+        # Send through CUPS
+        send_to_cups(pname, beep_bytes)
         
         return JSONResponse(
             content={
@@ -376,15 +432,20 @@ async def cut(
         pname = "printer_1"
     
     try:
-        printer_obj = get_printer(pname)
+        validate_printer(pname)
+        
+        # Use Dummy printer to generate commands
+        escpos = Dummy()
         
         # Feed before cutting
         if feed > 0:
-            printer_obj.text('\n' * feed)
+            escpos.text('\n' * feed)
         
         # Cut
-        printer_obj.cut()
-        printer_obj.close()
+        escpos.cut()
+        
+        # Send through CUPS
+        send_to_cups(pname, escpos.output)
         
         return JSONResponse(
             content={"message": "Paper cut", "printer": pname},
@@ -411,15 +472,17 @@ async def drawer(
         pname = "printer_1"
     
     try:
-        printer_obj = get_printer(pname)
+        validate_printer(pname)
         
         # ESC p m t1 t2 - Cash drawer command
         pin_val = 0 if pin == 0 else 1
         t1_val = clamp(t1, 0, 255)
         t2_val = clamp(t2, 0, 255)
         
-        printer_obj._raw(b'\x1b\x70' + bytes([pin_val, t1_val, t2_val]))
-        printer_obj.close()
+        drawer_bytes = b'\x1b\x70' + bytes([pin_val, t1_val, t2_val])
+        
+        # Send through CUPS
+        send_to_cups(pname, drawer_bytes)
         
         return JSONResponse(
             content={
@@ -448,11 +511,15 @@ async def feed(
         pname = "printer_1"
     
     try:
-        printer_obj = get_printer(pname)
+        validate_printer(pname)
         
+        # Use Dummy printer to generate commands
+        escpos = Dummy()
         lines_val = clamp(lines, 0, 255)
-        printer_obj.text('\n' * lines_val)
-        printer_obj.close()
+        escpos.text('\n' * lines_val)
+        
+        # Send through CUPS
+        send_to_cups(pname, escpos.output)
         
         return JSONResponse(
             content={
@@ -507,9 +574,10 @@ async def print_raw(
         return json_error(f"Invalid encoding: {e}", 400)
     
     try:
-        printer_obj = get_printer(pname)
-        printer_obj._raw(raw_data)
-        printer_obj.close()
+        validate_printer(pname)
+        
+        # Send raw data directly through CUPS
+        send_to_cups(pname, raw_data)
         
         return JSONResponse(
             content={
@@ -527,13 +595,16 @@ async def print_raw(
 
 if __name__ == "__main__":
     import uvicorn
-    print(f"🖨️  Thermal Printer Server with python-escpos")
-    print(f"📡 Using Network backend (direct IP connections)")
+    print(f"🖨️  Thermal Printer Server - HYBRID MODE")
+    print(f"📦 python-escpos generates ESC/POS commands")
+    print(f"📋 CUPS handles queue management & sending")
     print(f"🚀 Server listening on {SERVER_HOST}:{SERVER_PORT}")
     print(f"")
-    print(f"Available printers:")
-    for name, config in PRINTERS.items():
-        print(f"  - {name}: {config['host']}:{config['port']}")
+    print(f"Configured printers: {', '.join(PRINTERS)}")
+    print(f"")
+    print(f"Make sure printers are in CUPS:")
+    print(f"  sudo lpadmin -p printer_1 -v socket://192.168.1.87:9100 -E")
+    print(f"  sudo lpadmin -p printer_2 -v socket://192.168.1.105:9100 -E")
     print(f"")
     print(f"Test with: curl 'http://localhost:{SERVER_PORT}/beep?p=printer_1'")
     uvicorn.run(app, host=SERVER_HOST, port=SERVER_PORT)
