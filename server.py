@@ -30,6 +30,9 @@ PRINTERS = {
     "printer_2": {"host": "192.168.1.105", "port": 9100},
 }
 
+# Connection pool - reuse connections instead of creating new ones!
+_printer_connections = {}
+
 app = FastAPI()
 
 app.add_middleware(
@@ -49,13 +52,20 @@ def allowed_file(filename: str) -> bool:
 
 
 def get_printer(printer_name: str) -> Network:
-    """Get printer connection by name"""
+    """Get printer connection by name - REUSES connections for speed!"""
     if printer_name not in PRINTERS:
         raise HTTPException(status_code=400, detail=f"Unknown printer: {printer_name}")
     
+    # Reuse existing connection if available
+    if printer_name in _printer_connections:
+        return _printer_connections[printer_name]
+    
+    # Create new connection and cache it
     config = PRINTERS[printer_name]
     try:
-        return Network(config["host"], port=config["port"])
+        printer = Network(config["host"], port=config["port"])
+        _printer_connections[printer_name] = printer
+        return printer
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Cannot connect to {printer_name}: {str(e)}")
 
