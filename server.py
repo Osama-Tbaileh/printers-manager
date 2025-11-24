@@ -2,7 +2,6 @@ import os
 import uuid
 import base64
 import binascii
-import subprocess
 from typing import Optional
 
 from fastapi import (
@@ -12,7 +11,6 @@ from fastapi import (
     File,
     UploadFile,
     HTTPException,
-    Depends,
 )
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,29 +18,30 @@ from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 from PIL import Image
 
-# Import python-escpos library WITH CUPS BACKEND
-try:
-    from escpos.printer import CupsPrinter
-    from escpos.exceptions import Error as EscposError
-except ImportError:
-    raise ImportError(
-        "python-escpos is required. Install with: pip install python-escpos"
-    )
+# Import python-escpos library with NETWORK backend (direct IP connection)
+from escpos.printer import Network
+from escpos.exceptions import Error as EscposError
 
-# Load environment variables from .env file
+# Load environment variables
 load_dotenv()
 
-# Configuration - can be customized via .env file
+# Configuration
 UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", "uploads")
-ALLOWED_EXTENSIONS = set(os.getenv("ALLOWED_EXTENSIONS", "png,jpg,jpeg,bmp").split(","))
-MAX_WIDTH_DEFAULT = os.getenv("MAX_WIDTH_DEFAULT", "576")
+ALLOWED_EXTENSIONS = set(os.getenv("ALLOWED_EXTENSIONS", "png,jpg,jpeg,bmp,gif").split(","))
+MAX_WIDTH_DEFAULT = int(os.getenv("MAX_WIDTH_DEFAULT", "576"))
 MAX_CONTENT_LENGTH = int(os.getenv("MAX_UPLOAD_SIZE_MB", "20")) * 1024 * 1024
 SERVER_HOST = os.getenv("SERVER_HOST", "0.0.0.0")
 SERVER_PORT = int(os.getenv("SERVER_PORT", "3006"))
 
+# Printer configurations - DIRECT IP addresses (no CUPS bullshit)
+PRINTERS = {
+    "printer_1": {"host": os.getenv("PRINTER_1_IP", "192.168.1.87"), "port": 9100},
+    "printer_2": {"host": os.getenv("PRINTER_2_IP", "192.168.1.105"), "port": 9100},
+}
+
 app = FastAPI()
 
-# CORS configuration - allow all origins like Flask-CORS default
+# CORS configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -67,156 +66,28 @@ def is_allowed_file(filename: str) -> bool:
     )
 
 
-def require_printer(
-    printer: Optional[str] = Query(None, alias="printer"),
-    p: Optional[str] = Query(None, alias="p"),
-    verify: Optional[str] = Query(None),
-):
-    printer_name = printer or p
+def get_printer_config(printer_name: str):
+    """Get printer name, supporting aliases like 'p' and 'printer'"""
     if not printer_name:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": "Missing 'printer' query parameter (alias: p)."}
-        )
+        raise HTTPException(status_code=400, detail={"error": "Missing printer parameter"})
     
-    if verify and verify.strip() in {"1", "true", "yes"}:
-        try:
-            subprocess.run(
-                ["lpstat", "-p", printer_name],
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-        except subprocess.CalledProcessError as e:
-            raise HTTPException(
-                status_code=404,
-                detail={
-                    "error": "Printer not found or not enabled.",
-                    "stderr": e.stderr.decode("utf-8", "ignore"),
-                }
-            )
+    if printer_name not in PRINTERS:
+        raise HTTPException(status_code=400, detail={"error": f"Unknown printer: {printer_name}. Available: {list(PRINTERS.keys())}"})
     
-    return printer_name
+    return PRINTERS[printer_name]
 
 
-def get_cups_printer(printer_name: str) -> CupsPrinter:
-    """
-    Get a CUPS printer instance using python-escpos.
-    This maintains CUPS integration for queue management.
-    """
+def get_printer(printer_name: str) -> Network:
+    """Get a fresh Network printer connection"""
+    config = get_printer_config(printer_name)
     try:
-        return CupsPrinter(printer_name=printer_name)
+        return Network(config["host"], port=config["port"])
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail={"error": f"Failed to connect to printer: {str(e)}"}
-        )
-
-
-def send_raw(printer: str, data: bytes):
-    """Fallback raw printing using CUPS lp command"""
-    return subprocess.run(
-        ["lp", "-d", printer, "-o", "raw"],
-        input=data,
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
+        raise HTTPException(status_code=500, detail={"error": f"Cannot connect to {printer_name} at {config['host']}:{config['port']}: {str(e)}"})
 
 
 def clamp(val: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, val))
-
-
-def get_bool_arg(request: Request, name: str, default: bool = False) -> bool:
-    v = request.query_params.get(name)
-    if v is None:
-        return default
-    v = v.strip().lower()
-    return v in {"1", "true", "yes", "on"}
-
-
-async def get_json_or_form(request: Request, key: str) -> Optional[str]:
-    content_type = request.headers.get("content-type", "")
-    if "application/json" in content_type:
-        try:
-            js = await request.json()
-            return js.get(key)
-        except:
-            return None
-    else:
-        form = await request.form()
-        return form.get(key)
-
-
-def esc_init() -> bytes:
-    return b"\x1b\x40"
-
-
-def esc_align(align: str) -> bytes:
-    m = {"left": 0, "center": 1, "right": 2}.get(align, 0)
-    return bytes([0x1B, 0x61, m])
-
-
-def esc_bold(on: bool) -> bytes:
-    return bytes([0x1B, 0x45, 1 if on else 0])
-
-
-def esc_underline(mode: str) -> bytes:
-    m = {"none": 0, "single": 1, "double": 2}.get(mode, 0)
-    return bytes([0x1B, 0x2D, m])
-
-
-def esc_size(width: int = 1, height: int = 1) -> bytes:
-    w = clamp(width, 1, 8) - 1
-    h = clamp(height, 1, 8) - 1
-    n = (w << 4) | h
-    return bytes([0x1D, 0x21, n])
-
-
-def esc_feed(lines: int = 1) -> bytes:
-    n = clamp(int(lines), 0, 255)
-    return bytes([0x1B, 0x64, n])
-
-
-def esc_cut(mode: str = "partial", feed: int = 3) -> bytes:
-    out = bytearray()
-    if feed:
-        out += esc_feed(feed)
-    if mode == "full":
-        out += b"\x1d\x56\x00"
-    else:
-        out += b"\x1d\x56\x01"
-    return bytes(out)
-
-
-def esc_beep(count: int = 1, duration: int = 1) -> bytes:
-    c = clamp(int(count or 1), 1, 9)
-    d = clamp(int(duration or 1), 1, 9)
-    return bytes([0x1B, 0x42, c, d])
-
-
-def esc_drawer(pin: int = 0, t1: int = 100, t2: int = 100) -> bytes:
-    m = 0 if int(pin) == 0 else 1
-    on = clamp(int(t1), 0, 255)
-    off = clamp(int(t2), 0, 255)
-    return bytes([0x1B, 0x70, m, on, off])
-
-
-def esc_codepage(n: int) -> bytes:
-    return bytes([0x1B, 0x74, clamp(n, 0, 255)])
-
-
-CODEPAGE_MAP = {
-    "cp437": (0, "cp437"),
-    "cp860": (3, "cp860"),
-    "cp863": (4, "cp863"),
-    "cp865": (5, "cp865"),
-    "cp1252": (16, "cp1252"),
-    "cp866": (17, "cp866"),
-    "cp852": (18, "cp852"),
-    "cp858": (19, "cp858"),
-}
 
 
 # Error handlers
@@ -241,30 +112,55 @@ async def limit_upload_size(request: Request, call_next):
     return await call_next(request)
 
 
+@app.get("/")
 @app.get("/health")
 async def health():
-    return JSONResponse(content={"ok": True}, status_code=200)
+    return JSONResponse(content={
+        "ok": True,
+        "status": "running",
+        "printers": list(PRINTERS.keys()),
+        "backend": "python-escpos with Network (direct IP)"
+    }, status_code=200)
+
+
+@app.get("/list-printers")
+async def list_printers():
+    """List all configured printers"""
+    printer_list = []
+    for name, config in PRINTERS.items():
+        printer_list.append({
+            "name": name,
+            "host": config["host"],
+            "port": config["port"]
+        })
+    return JSONResponse(content={
+        "printers": printer_list,
+        "count": len(printer_list)
+    }, status_code=200)
 
 
 @app.post("/print-image")
 async def print_image(
     request: Request,
     image: UploadFile = File(...),
-    printer_name: str = Depends(require_printer),
-    max_width: str = Query(MAX_WIDTH_DEFAULT),
-    mode: str = Query("gsv0"),
-    align: str = Query("center"),
-    lines_after: int = Query(0),
-    beep_count: int = Query(1),
-    beep_duration: int = Query(2),
-    cut_mode: str = Query("partial"),
-    cut_feed: int = Query(0),
+    printer: Optional[str] = Query(None),
+    p: Optional[str] = Query(None),
+    printer_name: Optional[str] = Query(None),
+    max_width: int = Query(MAX_WIDTH_DEFAULT),
+    lines_after: int = Query(5),
+    cut: bool = Query(True),
+    center: bool = Query(True),
+    high_density: bool = Query(True),
 ):
     """
-    Print image using python-escpos library WITH CUPS BACKEND.
+    Print image using python-escpos library with direct network connection.
     This properly handles image buffering and prevents cutting mid-image.
-    CUPS manages the print queue automatically.
     """
+    # Resolve printer name from various parameters (backward compatible)
+    pname = p or printer or printer_name
+    if not pname:
+        pname = "printer_1"  # Default
+    
     if not image.filename or not is_allowed_file(image.filename):
         return json_error("Invalid or no selected file", 400)
 
@@ -278,14 +174,9 @@ async def print_image(
     with open(filepath, "wb") as f:
         f.write(content)
 
-    invert = get_bool_arg(request, "invert", False)
-    beep_after = get_bool_arg(request, "beep", True)
-    cut_after = get_bool_arg(request, "cut", True)
-    no_dither = get_bool_arg(request, "no_dither", False)
-
     try:
-        # Get CUPS printer instance - this USES CUPS for queue management
-        p = get_cups_printer(printer_name)
+        # Get printer connection
+        printer_obj = get_printer(pname)
         
         # Open and process image
         img = Image.open(filepath)
@@ -294,92 +185,58 @@ async def print_image(
         if img.mode not in ('RGB', 'L'):
             img = img.convert('RGB')
         
-        # Convert max_width to int for processing
-        max_width_int = int(max_width)
-        
         # Resize image to fit printer width while maintaining aspect ratio
-        if img.width > max_width_int:
-            ratio = max_width_int / img.width
+        if img.width > max_width:
+            ratio = max_width / img.width
             new_height = int(img.height * ratio)
-            img = img.resize((max_width_int, new_height), Image.Resampling.LANCZOS)
-        
-        # Invert colors if requested
-        if invert:
-            if img.mode == 'L':
-                img = Image.eval(img, lambda x: 255 - x)
-            elif img.mode == 'RGB':
-                from PIL import ImageOps
-                img = ImageOps.invert(img)
+            img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
         
         # Set alignment
-        align_map = {"left": "left", "center": "center", "right": "right"}
-        p.set(align=align_map.get(align, "center"))
+        if center:
+            printer_obj.set(align='center')
         
         # Print the image using escpos library
-        # The library handles proper buffering and ensures the image is fully sent
-        # before any subsequent commands (like cut) are executed
-        impl = "bitImageColumn" if mode == "gsv0" else "graphics"
-        
-        # Add extra feed lines to ensure image is fully printed before cutting
-        # This is critical to prevent mid-image cutting
-        p.image(
+        # This handles proper buffering and ensures the image is fully sent
+        printer_obj.image(
             img,
-            impl=impl,
-            fragment_height=960,  # Process in larger fragments for better reliability
-            high_density_vertical=True,
-            high_density_horizontal=True,
+            impl='bitImageRaster',  # Most reliable method
+            high_density_vertical=high_density,
+            high_density_horizontal=high_density,
         )
         
-        # Important: Add paper feed to ensure image is fully out of the print head
-        # before cutting. This prevents the cutting-in-middle issue.
+        # Reset alignment
+        if center:
+            printer_obj.set(align='left')
+        
+        # Important: Feed paper to ensure image is fully out before cutting
         if lines_after > 0:
-            p.ln(lines_after)
+            printer_obj.text('\n' * lines_after)
         else:
-            # Always add at least some feed lines after image for safety
-            p.ln(2)
+            printer_obj.text('\n\n')  # At least 2 lines for safety
         
-        # Beep if requested
-        if beep_after:
-            # Using raw ESC/POS command for beep as escpos library doesn't have direct method
-            p._raw(esc_beep(beep_count, beep_duration))
+        # Cut paper
+        if cut:
+            printer_obj.cut()
         
-        # Cut paper if requested
-        # By this point, the image should be fully printed and fed past the cutter
-        if cut_after:
-            if cut_feed > 0:
-                p.ln(cut_feed)
-            
-            # Use the library's cut method which properly handles the command
-            if cut_mode == "full":
-                p.cut(mode='FULL')
-            else:
-                p.cut(mode='PART')
-        
-        # Close printer connection to flush all commands
-        # CUPS will handle the actual queue and connection to the printer
-        p.close()
+        # Close connection (flushes all data)
+        printer_obj.close()
 
         return JSONResponse(
             content={
-                "message": "Print image sent successfully using escpos with CUPS",
-                "printer": printer_name,
+                "message": "Image printed successfully",
+                "printer": pname,
                 "image_width": img.width,
                 "image_height": img.height,
                 "lines_after": lines_after,
-                "beep": bool(beep_after),
-                "cut": bool(cut_after),
-                "method": "python-escpos with CUPS backend",
+                "cut": cut,
             },
             status_code=200,
         )
 
     except EscposError as e:
-        return json_error(
-            f"Escpos printing failed: {str(e)}",
-            500,
-        )
+        return json_error(f"Printer error: {str(e)}", 500)
     except Exception as e:
-        return json_error(f"Unexpected server error: {e}", 500)
+        return json_error(f"Server error: {e}", 500)
     finally:
         try:
             os.remove(filepath)
@@ -390,338 +247,293 @@ async def print_image(
 @app.post("/print-text")
 async def print_text(
     request: Request,
-    printer_name: str = Depends(require_printer),
+    printer: Optional[str] = Query(None),
+    p: Optional[str] = Query(None),
+    printer_name: Optional[str] = Query(None),
     align: str = Query("left"),
-    underline: str = Query("none"),
+    bold: bool = Query(False),
+    underline: int = Query(0),
     width: int = Query(1),
     height: int = Query(1),
     lines_after: int = Query(2),
-    cut_mode: str = Query("partial"),
-    cut_feed: int = Query(3),
-    codepage: Optional[str] = Query(None),
+    cut: bool = Query(False),
 ):
-    """
-    Print text using python-escpos library WITH CUPS BACKEND.
-    """
-    text = await get_json_or_form(request, "text")
+    """Print text to thermal printer"""
+    # Resolve printer name
+    pname = p or printer or printer_name
+    if not pname:
+        pname = "printer_1"
+    
+    # Get text from form data or JSON
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        try:
+            data = await request.json()
+            text = data.get("text")
+        except:
+            text = None
+    else:
+        form = await request.form()
+        text = form.get("text")
+    
     if not text:
-        return json_error("Missing 'text' in body (JSON or form).", 400)
-
-    bold = get_bool_arg(request, "bold", False)
-    cut_after = get_bool_arg(request, "cut", False)
+        return json_error("Missing 'text' in body", 400)
 
     try:
-        # Get CUPS printer instance
-        p = get_cups_printer(printer_name)
-        
-        # Set codepage if specified
-        if codepage:
-            cp_lower = codepage.lower()
-            if cp_lower in CODEPAGE_MAP:
-                idx, py_codec = CODEPAGE_MAP[cp_lower]
-                p.charcode(code=py_codec.upper())
+        printer_obj = get_printer(pname)
         
         # Set text formatting
-        align_map = {"left": "left", "center": "center", "right": "right"}
-        p.set(
-            align=align_map.get(align, "left"),
+        printer_obj.set(
+            align=align,
             bold=bold,
-            underline=1 if underline == "single" else 2 if underline == "double" else 0,
+            underline=underline,
             width=clamp(width, 1, 8),
             height=clamp(height, 1, 8),
         )
         
         # Print text
-        p.text(text + "\n")
+        printer_obj.text(text)
+        if not text.endswith('\n'):
+            printer_obj.text('\n')
+        
+        # Reset formatting
+        printer_obj.set()
         
         # Feed lines
         if lines_after > 0:
-            p.ln(lines_after)
+            printer_obj.text('\n' * lines_after)
         
         # Cut if requested
-        if cut_after:
-            if cut_feed > 0:
-                p.ln(cut_feed)
-            
-            if cut_mode == "full":
-                p.cut(mode='FULL')
-            else:
-                p.cut(mode='PART')
+        if cut:
+            printer_obj.cut()
         
-        # Close printer connection
-        p.close()
+        printer_obj.close()
 
         return JSONResponse(
             content={
-                "message": "Text sent successfully using escpos with CUPS",
-                "printer": printer_name,
-                "method": "python-escpos with CUPS backend",
+                "message": "Text printed successfully",
+                "printer": pname,
             },
             status_code=200,
         )
     except EscposError as e:
-        return json_error(
-            f"Escpos text printing failed: {str(e)}",
-            500,
-        )
+        return json_error(f"Printer error: {str(e)}", 500)
     except Exception as e:
-        return json_error(f"Unexpected server error: {e}", 500)
+        return json_error(f"Server error: {e}", 500)
 
 
 @app.get("/beep")
+@app.post("/beep")
 async def beep(
-    request: Request,
-    printer_name: str = Depends(require_printer),
+    printer: Optional[str] = Query(None),
+    p: Optional[str] = Query(None),
+    printer_name: Optional[str] = Query(None),
     count: int = Query(1),
-    duration: Optional[int] = Query(None),
-    time: Optional[int] = Query(None),
+    duration: int = Query(1),
 ):
-    """Send beep command to printer via CUPS"""
+    """Make printer beep"""
+    pname = p or printer or printer_name
+    if not pname:
+        pname = "printer_1"
+    
     try:
-        # Handle the 'time' parameter fallback
-        if time is not None and duration is None:
-            duration = time
-        if duration is None:
-            duration = 1
-
-        # Use CUPS printer for consistency
-        p = get_cups_printer(printer_name)
-        p._raw(esc_beep(count, duration))
-        p.close()
+        printer_obj = get_printer(pname)
+        
+        # ESC B n t - Buzzer command
+        count_val = clamp(count, 1, 9)
+        duration_val = clamp(duration, 1, 9)
+        
+        # Send beep command
+        printer_obj._raw(b'\x1b\x42' + bytes([count_val, duration_val]))
+        printer_obj.close()
         
         return JSONResponse(
             content={
                 "message": "Beep sent",
-                "printer": printer_name,
-                "count": clamp(count, 1, 9),
-                "duration_units_100ms": clamp(duration, 1, 9),
+                "printer": pname,
+                "count": count_val,
+                "duration_units_100ms": duration_val,
             },
             status_code=200,
         )
+    except EscposError as e:
+        return json_error(f"Printer error: {str(e)}", 500)
     except Exception as e:
-        return json_error(f"Failed to send beep: {e}", 500)
+        return json_error(f"Server error: {e}", 500)
 
 
 @app.api_route("/cut", methods=["GET", "POST"])
 async def cut(
-    printer_name: str = Depends(require_printer),
-    mode: str = Query("partial"),
+    printer: Optional[str] = Query(None),
+    p: Optional[str] = Query(None),
+    printer_name: Optional[str] = Query(None),
     feed: int = Query(3),
+    mode: str = Query("partial"),
 ):
-    """Send cut command to printer via CUPS"""
+    """Cut paper"""
+    pname = p or printer or printer_name
+    if not pname:
+        pname = "printer_1"
+    
     try:
-        p = get_cups_printer(printer_name)
+        printer_obj = get_printer(pname)
         
-        # Feed paper before cutting
+        # Feed before cutting
         if feed > 0:
-            p.ln(feed)
+            printer_obj.text('\n' * feed)
         
-        # Cut paper
-        if mode == "full":
-            p.cut(mode='FULL')
-        else:
-            p.cut(mode='PART')
-        
-        p.close()
+        # Cut
+        printer_obj.cut()
+        printer_obj.close()
         
         return JSONResponse(
-            content={"message": "Cut sent", "printer": printer_name},
+            content={"message": "Paper cut", "printer": pname},
             status_code=200,
         )
+    except EscposError as e:
+        return json_error(f"Printer error: {str(e)}", 500)
     except Exception as e:
-        return json_error(f"Failed to send cut: {e}", 500)
+        return json_error(f"Server error: {e}", 500)
 
 
 @app.api_route("/drawer", methods=["GET", "POST"])
 async def drawer(
-    printer_name: str = Depends(require_printer),
+    printer: Optional[str] = Query(None),
+    p: Optional[str] = Query(None),
+    printer_name: Optional[str] = Query(None),
     pin: int = Query(0),
     t1: int = Query(100),
     t2: int = Query(100),
 ):
-    """Open cash drawer via CUPS"""
+    """Open cash drawer"""
+    pname = p or printer or printer_name
+    if not pname:
+        pname = "printer_1"
+    
     try:
-        p = get_cups_printer(printer_name)
+        printer_obj = get_printer(pname)
         
-        # The escpos library has a cashdraw method
-        # pin: 0 or 1 (drawer pin 2 or 5)
-        # Using raw command for more control over timing
-        p._raw(esc_drawer(pin, t1, t2))
-        p.close()
+        # ESC p m t1 t2 - Cash drawer command
+        pin_val = 0 if pin == 0 else 1
+        t1_val = clamp(t1, 0, 255)
+        t2_val = clamp(t2, 0, 255)
+        
+        printer_obj._raw(b'\x1b\x70' + bytes([pin_val, t1_val, t2_val]))
+        printer_obj.close()
         
         return JSONResponse(
             content={
-                "message": "Cash drawer pulse sent",
-                "printer": printer_name,
-                "pin": 0 if pin == 0 else 1,
-                "t1": clamp(t1, 0, 255),
-                "t2": clamp(t2, 0, 255),
+                "message": "Cash drawer opened",
+                "printer": pname,
+                "pin": pin_val,
             },
             status_code=200,
         )
+    except EscposError as e:
+        return json_error(f"Printer error: {str(e)}", 500)
     except Exception as e:
-        return json_error(f"Failed to open cash drawer: {e}", 500)
+        return json_error(f"Server error: {e}", 500)
 
 
 @app.api_route("/feed", methods=["GET", "POST"])
 async def feed(
-    printer_name: str = Depends(require_printer),
+    printer: Optional[str] = Query(None),
+    p: Optional[str] = Query(None),
+    printer_name: Optional[str] = Query(None),
     lines: int = Query(3),
 ):
-    """Feed paper lines via CUPS"""
+    """Feed paper lines"""
+    pname = p or printer or printer_name
+    if not pname:
+        pname = "printer_1"
+    
     try:
-        p = get_cups_printer(printer_name)
-        p.ln(clamp(lines, 0, 255))
-        p.close()
+        printer_obj = get_printer(pname)
+        
+        lines_val = clamp(lines, 0, 255)
+        printer_obj.text('\n' * lines_val)
+        printer_obj.close()
         
         return JSONResponse(
             content={
-                "message": "Feed sent",
-                "printer": printer_name,
-                "lines": clamp(lines, 0, 255),
+                "message": "Paper fed",
+                "printer": pname,
+                "lines": lines_val,
             },
             status_code=200,
         )
+    except EscposError as e:
+        return json_error(f"Printer error: {str(e)}", 500)
     except Exception as e:
-        return json_error(f"Failed to feed: {e}", 500)
+        return json_error(f"Server error: {e}", 500)
 
 
 @app.post("/print-raw")
 async def print_raw(
     request: Request,
-    printer_name: str = Depends(require_printer),
+    printer: Optional[str] = Query(None),
+    p: Optional[str] = Query(None),
+    printer_name: Optional[str] = Query(None),
 ):
-    """
-    Send raw ESC/POS data to printer via CUPS.
-    Accepts base64 or hex encoded data.
-    """
-    b64 = await get_json_or_form(request, "base64")
-    hx = await get_json_or_form(request, "hex")
-
+    """Send raw ESC/POS data"""
+    pname = p or printer or printer_name
+    if not pname:
+        pname = "printer_1"
+    
+    # Get data from form or JSON
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        try:
+            data = await request.json()
+            b64 = data.get("base64")
+            hx = data.get("hex")
+        except:
+            b64 = None
+            hx = None
+    else:
+        form = await request.form()
+        b64 = form.get("base64")
+        hx = form.get("hex")
+    
     if not b64 and not hx:
-        return json_error("Provide 'base64' or 'hex' in body.", 400)
-
+        return json_error("Provide 'base64' or 'hex' in body", 400)
+    
     try:
         if b64:
-            data = base64.b64decode(b64, validate=True)
+            raw_data = base64.b64decode(b64)
         else:
-            data = binascii.unhexlify(hx.strip())
-    except (binascii.Error, ValueError) as e:
-        return json_error(f"Invalid payload encoding: {e}", 400)
-
+            raw_data = binascii.unhexlify(hx.strip())
+    except Exception as e:
+        return json_error(f"Invalid encoding: {e}", 400)
+    
     try:
-        p = get_cups_printer(printer_name)
-        p._raw(data)
-        p.close()
+        printer_obj = get_printer(pname)
+        printer_obj._raw(raw_data)
+        printer_obj.close()
         
         return JSONResponse(
             content={
                 "message": "Raw data sent",
-                "printer": printer_name,
-                "bytes": len(data),
+                "printer": pname,
+                "bytes": len(raw_data),
             },
             status_code=200,
         )
+    except EscposError as e:
+        return json_error(f"Printer error: {str(e)}", 500)
     except Exception as e:
-        return json_error(f"Failed to send raw data: {e}", 500)
-
-
-@app.get("/list-printers")
-async def list_printers():
-    """
-    List all available CUPS printers.
-    This endpoint uses CUPS to discover printers.
-    """
-    try:
-        result = subprocess.run(
-            ["lpstat", "-p"],
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        
-        # Parse lpstat output
-        printers = []
-        for line in result.stdout.strip().split('\n'):
-            if line.startswith('printer '):
-                # Format: "printer PrinterName is idle..."
-                parts = line.split()
-                if len(parts) >= 2:
-                    printers.append({
-                        "name": parts[1],
-                        "status": " ".join(parts[3:]) if len(parts) > 3 else "unknown"
-                    })
-        
-        return JSONResponse(
-            content={
-                "message": "Printers listed successfully",
-                "printers": printers,
-                "count": len(printers),
-            },
-            status_code=200,
-        )
-    except subprocess.CalledProcessError as e:
-        return json_error(
-            f"Failed to list printers: {e.stderr}",
-            500,
-        )
-    except Exception as e:
-        return json_error(f"Unexpected error: {e}", 500)
-
-
-@app.get("/printer-status")
-async def printer_status(
-    printer_name: str = Depends(require_printer),
-):
-    """
-    Get detailed status of a specific printer using CUPS.
-    """
-    try:
-        # Get printer status
-        result = subprocess.run(
-            ["lpstat", "-p", printer_name, "-l"],
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        
-        # Get printer jobs
-        jobs_result = subprocess.run(
-            ["lpstat", "-o", printer_name],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        
-        return JSONResponse(
-            content={
-                "message": "Printer status retrieved",
-                "printer": printer_name,
-                "status": result.stdout.strip(),
-                "jobs": jobs_result.stdout.strip() if jobs_result.returncode == 0 else "No jobs",
-            },
-            status_code=200,
-        )
-    except subprocess.CalledProcessError as e:
-        return json_error(
-            f"Failed to get printer status: {e.stderr}",
-            500,
-        )
-    except Exception as e:
-        return json_error(f"Unexpected error: {e}", 500)
+        return json_error(f"Server error: {e}", 500)
 
 
 if __name__ == "__main__":
     import uvicorn
-    print(f"🖨️  Starting printer server with python-escpos + CUPS integration")
-    print(f"📋 CUPS handles all printer queues and connections")
+    print(f"🖨️  Thermal Printer Server with python-escpos")
+    print(f"📡 Using Network backend (direct IP connections)")
     print(f"🚀 Server listening on {SERVER_HOST}:{SERVER_PORT}")
     print(f"")
-    print(f"Key features:")
-    print(f"  ✅ CUPS queue management (handles multiple jobs)")
-    print(f"  ✅ python-escpos (fixes image cutting issue)")
-    print(f"  ✅ All endpoints from old_server preserved")
-    print(f"  ✅ Supports ?printer=X or ?p=X")
+    print(f"Available printers:")
+    for name, config in PRINTERS.items():
+        print(f"  - {name}: {config['host']}:{config['port']}")
+    print(f"")
+    print(f"Test with: curl 'http://localhost:{SERVER_PORT}/beep?p=printer_1'")
     uvicorn.run(app, host=SERVER_HOST, port=SERVER_PORT)
