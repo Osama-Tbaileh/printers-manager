@@ -191,7 +191,7 @@ async def print_image(
     p: Optional[str] = Query(None),
     printer_name: Optional[str] = Query(None),
     max_width: int = Query(MAX_WIDTH_DEFAULT),
-    lines_after: int = Query(5),
+    lines_after: int = Query(0),
     cut: bool = Query(True),
     center: bool = Query(True),
     high_density: bool = Query(True),
