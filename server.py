@@ -511,6 +511,8 @@ async def print_image(
             status_code=200,
         )
 
+    except HTTPException:
+        raise
     except EscposError as e:
         return json_error(f"Printer error: {str(e)}", 500)
     except Exception as e:
@@ -603,6 +605,8 @@ async def print_text(
             },
             status_code=200,
         )
+    except HTTPException:
+        raise
     except EscposError as e:
         return json_error(f"Printer error: {str(e)}", 500)
     except Exception as e:
@@ -650,6 +654,8 @@ async def beep(
             },
             status_code=200,
         )
+    except HTTPException:
+        raise
     except EscposError as e:
         return json_error(f"Printer error: {str(e)}", 500)
     except Exception as e:
@@ -710,6 +716,8 @@ async def cut(
             },
             status_code=200,
         )
+    except HTTPException:
+        raise
     except EscposError as e:
         return json_error(f"Printer error: {str(e)}", 500)
     except Exception as e:
@@ -756,6 +764,8 @@ async def drawer(
             },
             status_code=200,
         )
+    except HTTPException:
+        raise
     except EscposError as e:
         return json_error(f"Printer error: {str(e)}", 500)
     except Exception as e:
@@ -798,6 +808,8 @@ async def feed(
             },
             status_code=200,
         )
+    except HTTPException:
+        raise
     except EscposError as e:
         return json_error(f"Printer error: {str(e)}", 500)
     except Exception as e:
@@ -861,6 +873,8 @@ async def print_raw(
             },
             status_code=200,
         )
+    except HTTPException:
+        raise
     except EscposError as e:
         return json_error(f"Printer error: {str(e)}", 500)
     except Exception as e:
