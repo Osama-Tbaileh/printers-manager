@@ -112,7 +112,99 @@ Returns server health status.
 **Response:**
 ```json
 {
-  "ok": true
+  "data": {
+    "ok": true,
+    "status": "running",
+    "printers": ["printer_1", "printer_2"],
+    "backend": "python-escpos (Dummy) + CUPS"
+  }
+}
+```
+
+---
+
+### Check Printer Status
+
+```http
+GET /printer-status?printer=<printer_name>
+```
+
+Check if a printer exists in CUPS and is online/ready to print.
+
+**Query Parameters:**
+- `printer` (required) - Printer name (alias: `p`, `printer_name`)
+
+**Success Response (200):**
+```json
+{
+  "data": {
+    "ok": true,
+    "printer": "printer_1",
+    "status": "online",
+    "exists": true,
+    "enabled": true,
+    "idle": true,
+    "accepting": true,
+    "details": "printer printer_1 is idle. enabled since ...",
+    "message": "Printer is ready"
+  }
+}
+```
+
+**Error Response (404 - Printer Not Found):**
+```json
+{
+  "data": {
+    "error": "Printer 'printer_1' does not exist in CUPS",
+    "printer": "printer_1",
+    "status": "not_found",
+    "message": "The printer 'printer_1' is not configured in CUPS. Please add it using: sudo lpadmin -p printer_1 -v socket://PRINTER_IP:9100 -E",
+    "fix": "sudo lpadmin -p printer_1 -v socket://PRINTER_IP:9100 -E"
+  }
+}
+```
+
+**Error Response (503 - Printer Disabled):**
+```json
+{
+  "data": {
+    "error": "Printer 'printer_1' is disabled",
+    "printer": "printer_1",
+    "status": "disabled",
+    "message": "The printer exists but is currently disabled. Please enable it in CUPS.",
+    "fix": "sudo cupsenable printer_1"
+  }
+}
+```
+
+**Example:**
+```bash
+curl "http://localhost:3006/printer-status?p=printer_1"
+```
+
+---
+
+### List Printers
+
+```http
+GET /list-printers
+```
+
+List all printers configured in CUPS.
+
+**Response:**
+```json
+{
+  "data": {
+    "printers": [
+      {
+        "name": "printer_1",
+        "status": "idle. enabled since ..."
+      }
+    ],
+    "count": 1,
+    "configured": ["printer_1", "printer_2"]
+  }
 }
 ```
 
@@ -348,21 +440,123 @@ echo "Test" | lp -d TP80
 
 ## Error Handling
 
-All endpoints return JSON error responses:
+### Comprehensive Printer Validation
+
+The server now includes comprehensive error handling for all printer operations. Before sending any print job, the server validates:
+
+1. **Printer Configuration** - Is the printer in the server configuration?
+2. **CUPS Existence** - Does the printer exist in CUPS?
+3. **Printer Status** - Is the printer enabled?
+4. **Job Acceptance** - Is the printer accepting print jobs?
+
+### Error Response Format
+
+All endpoints return detailed JSON error responses:
 
 ```json
 {
-  "error": "Error message",
-  "detail": "Additional details (if available)"
+  "data": {
+    "error": "Human-readable error message",
+    "printer": "printer_name",
+    "status": "error_code",
+    "message": "Detailed message with fix instructions",
+    "fix": "Command to fix the issue"
+  }
 }
 ```
 
-**Common HTTP Status Codes:**
-- `200` - Success
-- `400` - Bad Request (invalid parameters)
-- `404` - Not Found (printer not found)
-- `413` - Payload Too Large
-- `500` - Server Error
+The `data` object contains all error information:
+- **error**: Human-readable error message
+- **printer**: The printer name that caused the error
+- **status**: Error code (e.g., `not_found`, `disabled`, `not_accepting`)
+- **message**: Detailed explanation of the issue
+- **fix**: Command or action to resolve the issue
+
+### HTTP Status Codes
+
+- **200** - Success - Printer is ready and job sent
+- **400** - Bad Request - Invalid parameters or unknown printer
+- **404** - Not Found - Printer doesn't exist in CUPS
+- **413** - Payload Too Large - File too large
+- **503** - Service Unavailable - Printer exists but is disabled/not accepting jobs
+- **500** - Server Error - Internal error or CUPS communication failure
+
+### Common Error Scenarios
+
+#### 1. Printer Not Configured (400)
+```json
+{
+  "data": {
+    "error": "Unknown printer: printer_3. Available: ['printer_1', 'printer_2']",
+    "requested_printer": "printer_3",
+    "available_printers": ["printer_1", "printer_2"]
+  }
+}
+```
+**Fix:** Use a printer from the configured list.
+
+#### 2. Printer Not in CUPS (404)
+```json
+{
+  "data": {
+    "error": "Printer 'printer_1' does not exist in CUPS",
+    "printer": "printer_1",
+    "status": "not_found",
+    "message": "The printer 'printer_1' is not configured in CUPS. Please add it using: sudo lpadmin -p printer_1 -v socket://192.168.1.87:9100 -E",
+    "fix": "sudo lpadmin -p printer_1 -v socket://192.168.1.87:9100 -E"
+  }
+}
+```
+**Fix:** Add the printer to CUPS using the command in `data.fix`.
+
+#### 3. Printer Disabled (503)
+```json
+{
+  "data": {
+    "error": "Printer 'printer_1' is disabled",
+    "printer": "printer_1",
+    "status": "disabled",
+    "message": "The printer exists but is currently disabled. Please enable it in CUPS.",
+    "fix": "sudo cupsenable printer_1"
+  }
+}
+```
+**Fix:** Enable the printer using the command in `data.fix`.
+
+#### 4. Printer Not Accepting Jobs (503)
+```json
+{
+  "data": {
+    "error": "Printer 'printer_1' is not accepting jobs",
+    "printer": "printer_1",
+    "status": "not_accepting",
+    "message": "The printer exists but is not accepting print jobs. Please check CUPS configuration.",
+    "fix": "sudo cupsaccept printer_1"
+  }
+}
+```
+**Fix:** Accept jobs using the command in `data.fix`.
+
+### Testing Error Handling
+
+Use the included test script:
+
+```bash
+python test_printer_errors.py
+```
+
+Or check printer status before printing:
+
+```bash
+# Check if printer is ready
+curl "http://localhost:3006/printer-status?p=printer_1"
+
+# If status is OK (200), proceed with printing
+curl -X POST "http://localhost:3006/print-image?p=printer_1" \
+  -F "image=@receipt.png"
+```
+
+For complete error handling documentation, see **[ERROR_HANDLING.md](ERROR_HANDLING.md)**
 
 ## Development
 

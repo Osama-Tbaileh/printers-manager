@@ -53,9 +53,10 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 
 def json_error(message: str, status: int = 400, **extra):
-    payload = {"error": message}
+    data = {"error": message}
     if extra:
-        payload.update(extra)
+        data.update(extra)
+    payload = {"data": data}
     return JSONResponse(content=payload, status_code=status)
 
 
@@ -68,26 +69,169 @@ def is_allowed_file(filename: str) -> bool:
 def validate_printer(printer_name: str) -> str:
     """Validate printer name and return it"""
     if not printer_name:
-        raise HTTPException(status_code=400, detail={"error": "Missing printer parameter"})
+        error_msg = "Missing printer parameter"
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "data": {
+                    "error": error_msg
+                }
+            }
+        )
     
     if printer_name not in PRINTERS:
-        raise HTTPException(status_code=400, detail={"error": f"Unknown printer: {printer_name}. Available: {PRINTERS}"})
+        error_msg = f"Unknown printer: {printer_name}. Available: {PRINTERS}"
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "data": {
+                    "error": error_msg,
+                    "requested_printer": printer_name,
+                    "available_printers": PRINTERS
+                }
+            }
+        )
     
     return printer_name
 
 
-def verify_cups_printer(printer_name: str):
-    """Verify printer exists in CUPS (optional check)"""
+def check_printer_status(printer_name: str) -> dict:
+    """
+    Check if printer exists in CUPS and get its status.
+    Returns dict with status information or raises HTTPException.
+    """
     try:
-        subprocess.run(
+        # Check if printer exists with lpstat -p
+        result = subprocess.run(
             ["lpstat", "-p", printer_name],
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            text=True,
         )
-    except subprocess.CalledProcessError:
-        # Printer not in CUPS - that's okay, we'll add it
-        pass
+        
+        output = result.stdout.strip()
+        
+        # Parse status from lpstat output
+        # Example outputs:
+        # "printer printer_1 is idle. enabled since ..."
+        # "printer printer_1 disabled since ..."
+        # "printer printer_1 now printing ..."
+        
+        status_info = {
+            "exists": True,
+            "name": printer_name,
+            "enabled": False,
+            "idle": False,
+            "raw_status": output
+        }
+        
+        # Check if printer is enabled
+        if "disabled" in output.lower():
+            error_msg = f"Printer '{printer_name}' is disabled"
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "data": {
+                        "error": error_msg,
+                        "printer": printer_name,
+                        "status": "disabled",
+                        "message": "The printer exists but is currently disabled. Please enable it in CUPS.",
+                        "fix": f"sudo cupsenable {printer_name}"
+                    }
+                }
+            )
+        
+        # Check printer state
+        if "idle" in output.lower():
+            status_info["idle"] = True
+            status_info["enabled"] = True
+        elif "printing" in output.lower():
+            status_info["idle"] = False
+            status_info["enabled"] = True
+        else:
+            # Check if printer is enabled but we can't determine state
+            status_info["enabled"] = "enabled" in output.lower()
+        
+        # Additional check: verify printer is accepting jobs
+        try:
+            accept_result = subprocess.run(
+                ["lpstat", "-a", printer_name],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            
+            accept_output = accept_result.stdout.strip()
+            
+            # Example: "printer_1 accepting requests since ..."
+            # or "printer_1 not accepting requests since ..."
+            
+            if "not accepting" in accept_output.lower():
+                error_msg = f"Printer '{printer_name}' is not accepting jobs"
+                raise HTTPException(
+                    status_code=503,
+                    detail={
+                        "data": {
+                            "error": error_msg,
+                            "printer": printer_name,
+                            "status": "not_accepting",
+                            "message": "The printer exists but is not accepting print jobs. Please check CUPS configuration.",
+                            "fix": f"sudo cupsaccept {printer_name}"
+                        }
+                    }
+                )
+            
+            status_info["accepting"] = "accepting" in accept_output.lower()
+            
+        except subprocess.CalledProcessError:
+            # If we can't check acceptance status, continue anyway
+            pass
+        
+        return status_info
+        
+    except subprocess.CalledProcessError as e:
+        # Printer does not exist in CUPS
+        error_output = e.stderr.strip() if e.stderr else ""
+        error_msg = f"Printer '{printer_name}' does not exist in CUPS"
+        
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "data": {
+                    "error": error_msg,
+                    "printer": printer_name,
+                    "status": "not_found",
+                    "message": f"The printer '{printer_name}' is not configured in CUPS. Please add it using: sudo lpadmin -p {printer_name} -v socket://PRINTER_IP:9100 -E",
+                    "cups_error": error_output,
+                    "fix": f"sudo lpadmin -p {printer_name} -v socket://PRINTER_IP:9100 -E"
+                }
+            }
+        )
+    except FileNotFoundError:
+        # lpstat command not found (CUPS not installed)
+        error_msg = "CUPS is not installed or lpstat command not found"
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "data": {
+                    "error": error_msg,
+                    "printer": printer_name,
+                    "status": "cups_unavailable",
+                    "message": "CUPS printing system is not available on this server. Please install CUPS.",
+                    "fix": "sudo apt-get install cups"
+                }
+            }
+        )
+
+
+def verify_cups_printer(printer_name: str):
+    """
+    Verify printer exists in CUPS and is online/available.
+    Raises HTTPException with detailed error if printer is not usable.
+    """
+    return check_printer_status(printer_name)
 
 
 def send_to_cups(printer_name: str, data: bytes):
@@ -102,9 +246,17 @@ def send_to_cups(printer_name: str, data: bytes):
         )
         return result
     except subprocess.CalledProcessError as e:
+        cups_error = e.stderr.decode('utf-8', 'ignore')
+        error_msg = f"CUPS printing failed: {cups_error}"
         raise HTTPException(
             status_code=500,
-            detail={"error": f"CUPS printing failed: {e.stderr.decode('utf-8', 'ignore')}"}
+            detail={
+                "data": {
+                    "error": error_msg,
+                    "printer": printer_name,
+                    "cups_error": cups_error
+                }
+            }
         )
 
 
@@ -116,8 +268,14 @@ def clamp(val: int, lo: int, hi: int) -> int:
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     if isinstance(exc.detail, dict):
+        # Keep the structure as-is (already has data key)
         return JSONResponse(content=exc.detail, status_code=exc.status_code)
-    return json_error(str(exc.detail), exc.status_code)
+    # For simple string errors, wrap in standard format
+    error_msg = str(exc.detail)
+    return JSONResponse(
+        content={"data": {"error": error_msg}},
+        status_code=exc.status_code
+    )
 
 
 @app.exception_handler(500)
@@ -138,11 +296,13 @@ async def limit_upload_size(request: Request, call_next):
 @app.get("/health")
 async def health():
     return JSONResponse(content={
-        "ok": True,
-        "status": "running",
-        "printers": PRINTERS,
-        "backend": "python-escpos (Dummy) + CUPS",
-        "method": "escpos generates commands, CUPS sends them"
+        "data": {
+            "ok": True,
+            "status": "running",
+            "printers": PRINTERS,
+            "backend": "python-escpos (Dummy) + CUPS",
+            "method": "escpos generates commands, CUPS sends them"
+        }
     }, status_code=200)
 
 
@@ -170,17 +330,71 @@ async def list_printers():
                     })
         
         return JSONResponse(content={
-            "printers": printer_list,
-            "count": len(printer_list),
-            "configured": PRINTERS
+            "data": {
+                "printers": printer_list,
+                "count": len(printer_list),
+                "configured": PRINTERS
+            }
         }, status_code=200)
     except:
         return JSONResponse(content={
-            "printers": [],
-            "count": 0,
-            "configured": PRINTERS,
-            "note": "Run lpstat -p to see CUPS printers"
+            "data": {
+                "printers": [],
+                "count": 0,
+                "configured": PRINTERS,
+                "note": "Run lpstat -p to see CUPS printers"
+            }
         }, status_code=200)
+
+
+@app.get("/printer-status")
+async def get_printer_status(
+    printer: Optional[str] = Query(None),
+    p: Optional[str] = Query(None),
+    printer_name: Optional[str] = Query(None),
+):
+    """
+    Check the status of a specific printer.
+    Returns detailed information about whether the printer exists, is enabled, and is accepting jobs.
+    """
+    # Resolve printer name
+    pname = p or printer or printer_name
+    if not pname:
+        return json_error("Missing printer parameter. Use ?p=printer_name", 400)
+    
+    try:
+        # Validate printer name is in our configuration
+        validate_printer(pname)
+        
+        # Check printer status in CUPS
+        status = check_printer_status(pname)
+        
+        return JSONResponse(content={
+            "data": {
+                "ok": True,
+                "printer": pname,
+                "status": "online",
+                "exists": status.get("exists", False),
+                "enabled": status.get("enabled", False),
+                "idle": status.get("idle", False),
+                "accepting": status.get("accepting", False),
+                "details": status.get("raw_status", ""),
+                "message": "Printer is ready"
+            }
+        }, status_code=200)
+        
+    except HTTPException as e:
+        # Return the error details from check_printer_status
+        if isinstance(e.detail, dict):
+            return JSONResponse(content=e.detail, status_code=e.status_code)
+        else:
+            error_msg = str(e.detail)
+            return JSONResponse(
+                content={"data": {"error": error_msg}},
+                status_code=e.status_code
+            )
+    except Exception as e:
+        return json_error(f"Failed to check printer status: {str(e)}", 500)
 
 
 @app.post("/print-image")
@@ -224,6 +438,9 @@ async def print_image(
     try:
         # Validate printer
         validate_printer(pname)
+        
+        # Check if printer exists in CUPS and is available
+        verify_cups_printer(pname)
         
         # Use Dummy printer to generate ESC/POS commands (doesn't send anything)
         escpos = Dummy()
@@ -281,13 +498,15 @@ async def print_image(
 
         return JSONResponse(
             content={
-                "message": "Image printed successfully",
-                "printer": pname,
-                "image_width": img.width,
-                "image_height": img.height,
-                "lines_after": lines_after,
-                "beep": beep,
-                "cut": cut,
+                "data": {
+                    "message": "Image printed successfully",
+                    "printer": pname,
+                    "image_width": img.width,
+                    "image_height": img.height,
+                    "lines_after": lines_after,
+                    "beep": beep,
+                    "cut": cut,
+                }
             },
             status_code=200,
         )
@@ -341,6 +560,9 @@ async def print_text(
     try:
         validate_printer(pname)
         
+        # Check if printer exists in CUPS and is available
+        verify_cups_printer(pname)
+        
         # Use Dummy printer to generate ESC/POS commands
         escpos = Dummy()
         
@@ -374,8 +596,10 @@ async def print_text(
 
         return JSONResponse(
             content={
-                "message": "Text printed successfully",
-                "printer": pname,
+                "data": {
+                    "message": "Text printed successfully",
+                    "printer": pname,
+                }
             },
             status_code=200,
         )
@@ -402,6 +626,9 @@ async def beep(
     try:
         validate_printer(pname)
         
+        # Check if printer exists in CUPS and is available
+        verify_cups_printer(pname)
+        
         # ESC B n t - Buzzer command
         count_val = clamp(count, 1, 9)
         duration_val = clamp(duration, 1, 9)
@@ -414,10 +641,12 @@ async def beep(
         
         return JSONResponse(
             content={
-                "message": "Beep sent",
-                "printer": pname,
-                "count": count_val,
-                "duration_units_100ms": duration_val,
+                "data": {
+                    "message": "Beep sent",
+                    "printer": pname,
+                    "count": count_val,
+                    "duration_units_100ms": duration_val,
+                }
             },
             status_code=200,
         )
@@ -446,6 +675,9 @@ async def cut(
     try:
         validate_printer(pname)
         
+        # Check if printer exists in CUPS and is available
+        verify_cups_printer(pname)
+        
         # Use Dummy printer to generate commands
         escpos = Dummy()
         
@@ -468,11 +700,13 @@ async def cut(
         
         return JSONResponse(
             content={
-                "message": "Paper cut",
-                "printer": pname,
-                "feed": feed,
-                "beep": beep,
-                "mode": mode
+                "data": {
+                    "message": "Paper cut",
+                    "printer": pname,
+                    "feed": feed,
+                    "beep": beep,
+                    "mode": mode
+                }
             },
             status_code=200,
         )
@@ -499,6 +733,9 @@ async def drawer(
     try:
         validate_printer(pname)
         
+        # Check if printer exists in CUPS and is available
+        verify_cups_printer(pname)
+        
         # ESC p m t1 t2 - Cash drawer command
         pin_val = 0 if pin == 0 else 1
         t1_val = clamp(t1, 0, 255)
@@ -511,9 +748,11 @@ async def drawer(
         
         return JSONResponse(
             content={
-                "message": "Cash drawer opened",
-                "printer": pname,
-                "pin": pin_val,
+                "data": {
+                    "message": "Cash drawer opened",
+                    "printer": pname,
+                    "pin": pin_val,
+                }
             },
             status_code=200,
         )
@@ -538,6 +777,9 @@ async def feed(
     try:
         validate_printer(pname)
         
+        # Check if printer exists in CUPS and is available
+        verify_cups_printer(pname)
+        
         # Use Dummy printer to generate commands
         escpos = Dummy()
         lines_val = clamp(lines, 0, 255)
@@ -548,9 +790,11 @@ async def feed(
         
         return JSONResponse(
             content={
-                "message": "Paper fed",
-                "printer": pname,
-                "lines": lines_val,
+                "data": {
+                    "message": "Paper fed",
+                    "printer": pname,
+                    "lines": lines_val,
+                }
             },
             status_code=200,
         )
@@ -601,14 +845,19 @@ async def print_raw(
     try:
         validate_printer(pname)
         
+        # Check if printer exists in CUPS and is available
+        verify_cups_printer(pname)
+        
         # Send raw data directly through CUPS
         send_to_cups(pname, raw_data)
         
         return JSONResponse(
             content={
-                "message": "Raw data sent",
-                "printer": pname,
-                "bytes": len(raw_data),
+                "data": {
+                    "message": "Raw data sent",
+                    "printer": pname,
+                    "bytes": len(raw_data),
+                }
             },
             status_code=200,
         )
